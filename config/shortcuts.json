@@ -1,0 +1,54 @@
+{
+  "shopify": {
+    "keyword": "shopify",
+    "aliases": [
+      "شوبيفاي",
+      "متجر العمل",
+      "متجر شوبيفاي",
+      "orders",
+      "طلبات شوبيفاي"
+    ],
+    "type": "url",
+    "target": "https://admin.shopify.com/store/prifix1/orders?country=EG",
+    "profile": "work",
+    "description": "متجر شوبيفاي بريفكس ببروفايل العمل"
+  },
+  "telegram": {
+    "keyword": "telegram",
+    "aliases": [
+      "تلجرام",
+      "تليجرام",
+      "telegtam",
+      "تليغرام",
+      "تيليجرام",
+      "telegram desktop"
+    ],
+    "type": "app",
+    "target": "C:\\Users\\morad\\AppData\\Roaming\\Telegram Desktop\\Telegram.exe",
+    "mode": "fullscreen",
+    "profile": "",
+    "description": "تطبيق تلجرام"
+  },
+  "anti-gravity_,_antigravity_,_انتي_جرافيتي": {
+    "keyword": "Anti-gravity , antigravity , انتي جرافيتي",
+    "aliases": [
+      "Anti-gravity , antigravity , انتي جرافيتي"
+    ],
+    "type": "app",
+    "target": "C:/Users/modym/AppData/Local/Programs/antigravity/Antigravity.exe",
+    "mode": "fullscreen",
+    "profile": "",
+    "description": "اختصار Anti-gravity , antigravity , انتي جرافيتي"
+  },
+  "fortnite_,_فورتنايت": {
+    "keyword": "fortnite , فورتنايت",
+    "aliases": [
+      "fortnite , فورتنايت"
+    ],
+    "type": "app",
+    "target": "com.epicgames.launcher://apps/fn%3A4fe75bbc5a674f4f9b356b5c90567da5%3AFortnite?action=launch&silent=true",
+    "mode": "fullscreen",
+    "profile": "",
+    "description": "اختصار fortnite , فورتنايت"
+  }
+}
