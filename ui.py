@@ -41,7 +41,7 @@ except Exception as _e:            # noqa: BLE001 - reported, never fatal
     print(f"[Video] playback unavailable ({_e}) — the HUD will not show video.")
 
 from PyQt6.QtWidgets import (
-    QGraphicsScene, QGraphicsView,
+    QGraphicsItem, QGraphicsObject, QGraphicsPathItem, QGraphicsScene, QGraphicsView,
     QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter,
     QStackedWidget, QTabWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
@@ -2651,6 +2651,8 @@ class _FlowNodeWidget(QFrame):
         self._action_combo.addItem("👁 الرؤية والكمبيوتر (Vision & PC)", "computer_control")
         self._action_combo.addItem("🚀 فتح تطبيق (Open App)", "open_app")
         self._action_combo.addItem("💬 إرسال رسالة (Send Message)", "send_message")
+        self._action_combo.addItem("🤖 أمر لجارفيس (JARVIS Command)", "jarvis_command")
+        self._action_combo.addItem("✈️ رسالة تليجرام لك (Telegram Bot)", "telegram_send")
         self._action_combo.addItem("⏱ انتظار (Wait)", "wait")
         self._action_combo.currentIndexChanged.connect(self._on_action_changed)
         top_row.addWidget(self._action_combo)
@@ -2718,17 +2720,24 @@ class _FlowNodeWidget(QFrame):
             }}
             QLineEdit:focus, QComboBox:focus {{ border-color: {C.PRI}; }}
         """
-        _toggle_style = f"""
-            QPushButton {{
-                background: #000a10; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 2px;
-                padding: 2px 6px; font-size: 10px; text-align: left;
-            }}
-            QPushButton:checked {{
-                background: rgba(0, 212, 255, 0.15); color: {C.PRI};
-                border-color: {C.PRI}; font-weight: bold;
-            }}
-        """
+        def _sync_skip_btn(btn: QPushButton, base_label: str):
+            on = btn.isChecked()
+            btn.setText(f"{'☑' if on else '☐'} {base_label}: {'مفعّل' if on else 'متوقف'}")
+            if on:
+                btn.setStyleSheet(
+                    "QPushButton { background: rgba(0, 255, 136, 0.22); color: #00ff88; "
+                    "border: 1.5px solid #00ff88; border-radius: 4px; "
+                    "padding: 3px 10px; font-size: 10px; font-weight: bold; }"
+                    "QPushButton:hover { background: rgba(0, 255, 136, 0.32); }"
+                )
+            else:
+                btn.setStyleSheet(
+                    f"QPushButton {{ background: #000a10; color: {C.TEXT_DIM}; "
+                    f"border: 1px solid {C.BORDER}; border-radius: 4px; "
+                    "padding: 3px 10px; font-size: 10px; }}"
+                    f"QPushButton:hover {{ border-color: {C.PRI}; color: {C.TEXT}; }}"
+                )
+        self._sync_skip_btn = _sync_skip_btn
 
         # 1. Browser container
         self._browser_box = QWidget()
@@ -2763,11 +2772,13 @@ class _FlowNodeWidget(QFrame):
         self._b_url.setStyleSheet(_f_style)
         self._b_url.textChanged.connect(self.changed.emit)
         b_r2.addWidget(self._b_url, stretch=1)
-        self._b_skip_if_open = QPushButton("✓ تخطي إذا كان مفتوحاً")
+        self._b_skip_if_open = QPushButton()
         self._b_skip_if_open.setCheckable(True)
         self._b_skip_if_open.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._b_skip_if_open.setStyleSheet(_toggle_style)
-        self._b_skip_if_open.clicked.connect(self.changed.emit)
+        self._sync_skip_btn(self._b_skip_if_open, "تخطي إذا كان مفتوحاً")
+        self._b_skip_if_open.toggled.connect(
+            lambda _v: (self._sync_skip_btn(self._b_skip_if_open, "تخطي إذا كان مفتوحاً"), self.changed.emit())
+        )
         b_r2.addWidget(self._b_skip_if_open)
         b_lay.addLayout(b_r2)
         vlay.addWidget(self._browser_box)
@@ -2875,11 +2886,13 @@ class _FlowNodeWidget(QFrame):
         self._a_inst.setStyleSheet(_f_style)
         self._a_inst.textChanged.connect(self.changed.emit)
         a_lay.addWidget(self._a_inst, stretch=1)
-        self._a_skip_if_open = QPushButton("✓ تخطي إذا كان قيد التشغيل")
+        self._a_skip_if_open = QPushButton()
         self._a_skip_if_open.setCheckable(True)
         self._a_skip_if_open.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._a_skip_if_open.setStyleSheet(_toggle_style)
-        self._a_skip_if_open.clicked.connect(self.changed.emit)
+        self._sync_skip_btn(self._a_skip_if_open, "تخطي إذا كان قيد التشغيل")
+        self._a_skip_if_open.toggled.connect(
+            lambda _v: (self._sync_skip_btn(self._a_skip_if_open, "تخطي إذا كان قيد التشغيل"), self.changed.emit())
+        )
         a_lay.addWidget(self._a_skip_if_open)
         vlay.addWidget(self._app_box)
 
@@ -2917,6 +2930,38 @@ class _FlowNodeWidget(QFrame):
         w_lay.addStretch()
         vlay.addWidget(self._wait_box)
 
+        # 9. JARVIS Command container
+        self._jcmd_box = QWidget()
+        j_lay = QHBoxLayout(self._jcmd_box)
+        j_lay.setContentsMargins(0, 2, 0, 0)
+        j_lay.setSpacing(4)
+        j_lbl = QLabel("الأمر لجارفيس:")
+        j_lbl.setFont(QFont("Segoe UI", 7))
+        j_lbl.setStyleSheet(f"color: {C.TEXT_MED};")
+        j_lay.addWidget(j_lbl)
+        self._jcmd_text = QLineEdit()
+        self._jcmd_text.setPlaceholderText("مثال: اقرأ الشاشة وابعتلي ملخص على التليجرام")
+        self._jcmd_text.setStyleSheet(_f_style)
+        self._jcmd_text.textChanged.connect(self.changed.emit)
+        j_lay.addWidget(self._jcmd_text, stretch=1)
+        vlay.addWidget(self._jcmd_box)
+
+        # 10. Telegram Bot Send container
+        self._tgsend_box = QWidget()
+        tg_lay = QHBoxLayout(self._tgsend_box)
+        tg_lay.setContentsMargins(0, 2, 0, 0)
+        tg_lay.setSpacing(4)
+        tg_lbl = QLabel("رسالة للبوت:")
+        tg_lbl.setFont(QFont("Segoe UI", 7))
+        tg_lbl.setStyleSheet(f"color: {C.TEXT_MED};")
+        tg_lay.addWidget(tg_lbl)
+        self._tgsend_text = QLineEdit()
+        self._tgsend_text.setPlaceholderText("النص المراد إرساله لك على بوت التليجرام فوراً")
+        self._tgsend_text.setStyleSheet(_f_style)
+        self._tgsend_text.textChanged.connect(self.changed.emit)
+        tg_lay.addWidget(self._tgsend_text, stretch=1)
+        vlay.addWidget(self._tgsend_box)
+
         self._on_action_changed()
 
     def update_index(self, idx: int, is_first: bool, is_last: bool):
@@ -2935,6 +2980,8 @@ class _FlowNodeWidget(QFrame):
         self._app_box.setVisible(act == "open_app")
         self._msg_box.setVisible(act == "send_message")
         self._wait_box.setVisible(act == "wait")
+        self._jcmd_box.setVisible(act == "jarvis_command")
+        self._tgsend_box.setVisible(act == "telegram_send")
         self.changed.emit()
 
     def to_step(self):
@@ -2995,6 +3042,10 @@ class _FlowNodeWidget(QFrame):
             except ValueError:
                 s = 1.0
             params = {"seconds": s}
+        elif act == "jarvis_command":
+            params = {"command": self._jcmd_text.text().strip()}
+        elif act == "telegram_send":
+            params = {"message": self._tgsend_text.text().strip()}
         return FlowStep(action=act, parameters=params, label=label, condition=condition)
 
     def from_step(self, step):
@@ -3014,6 +3065,7 @@ class _FlowNodeWidget(QFrame):
             self._b_bookmark.setText(p.get("bookmark", ""))
             self._b_url.setText(p.get("url", ""))
             self._b_skip_if_open.setChecked(bool(p.get("skip_if_open") or cond.startswith("skip_if_open")))
+            self._sync_skip_btn(self._b_skip_if_open, "تخطي إذا كان مفتوحاً")
         elif step.action == "check_condition":
             self._cond_target.setText(p.get("target", ""))
             c_type_idx = self._cond_type.findData(p.get("check_type", "is_open"))
@@ -3039,25 +3091,993 @@ class _FlowNodeWidget(QFrame):
             self._a_name.setText(p.get("app_name", ""))
             self._a_inst.setText(p.get("instruction", ""))
             self._a_skip_if_open.setChecked(bool(p.get("skip_if_open") or cond.startswith("skip_if_open")))
+            self._sync_skip_btn(self._a_skip_if_open, "تخطي إذا كان قيد التشغيل")
         elif step.action == "send_message":
             self._m_target.setText(p.get("target", ""))
             self._m_text.setText(p.get("message", ""))
         elif step.action == "wait":
             self._w_sec.setText(str(p.get("seconds", 1)))
+        elif step.action == "jarvis_command":
+            self._jcmd_text.setText(p.get("command", "") or p.get("text", ""))
+        elif step.action == "telegram_send":
+            self._tgsend_text.setText(p.get("message", ""))
         self._on_action_changed()
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# N8N-STYLE INTERACTIVE NODE MAP CANVAS
+# ══════════════════════════════════════════════════════════════════════════════
+
+_NODE_ACCENT = {
+    "trigger":          ("#00ff88", "⚡", "START TRIGGER"),
+    "browser_control":  ("#00d4ff", "🌐", "المتصفح / Browser"),
+    "check_condition":  ("#ffcc00", "🔍", "شرط / IF Branch"),
+    "refresh_page":     ("#38bdf8", "🔄", "تحديث / Refresh"),
+    "click_element":    ("#ff8c00", "👆", "نقر / Click"),
+    "computer_control": ("#c084fc", "👁", "رؤية / Vision PC"),
+    "open_app":         ("#34d399", "🚀", "فتح تطبيق / App"),
+    "send_message":     ("#f472b6", "💬", "إرسال رسالة"),
+    "jarvis_command":   ("#22d3ee", "🤖", "أمر لجارفيس"),
+    "telegram_send":    ("#38bdf8", "✈️", "تليجرام لك"),
+    "wait":             ("#94a3b8", "⏱", "انتظار / Wait"),
+}
+
+
+def _summarize_step_dict(step: dict) -> str:
+    act = (step or {}).get("action", "wait")
+    p = (step or {}).get("parameters") or {}
+    if act == "browser_control":
+        sub = p.get("action", "open")
+        target = p.get("bookmark") or p.get("url") or p.get("profile_name") or ""
+        skip_tag = " ⏩" if p.get("skip_if_open") else ""
+        base = f"{sub}: {target}"[:31] if target else sub
+        return f"{base}{skip_tag}" 
+    if act == "check_condition":
+        t = p.get("target", "?")
+        chk = "مفتوح؟" if p.get("check_type", "is_open") == "is_open" else "ظاهر؟"
+        return f"هل '{t}' {chk}"[:34]
+    if act in ("refresh_page", "reload"):
+        return "إعادة تحميل الصفحة (F5)"
+    if act in ("click_element", "click_button", "click"):
+        return f"نقر: {p.get('target') or p.get('selector') or '?'}"[:34]
+    if act == "computer_control":
+        sub = p.get("action", "read_screen")
+        q = p.get("description") or p.get("question") or ""
+        return f"{sub}: {q}"[:34] if q else sub
+    if act == "open_app":
+        return f"فتح: {p.get('app_name', '?')}"[:34]
+    if act == "send_message":
+        return f"إلى {p.get('target', '?')}: {p.get('message', '')}"[:34]
+    if act == "jarvis_command":
+        return f"«{p.get('command', '')}»"[:34]
+    if act == "telegram_send":
+        return f"بوت: «{p.get('message', '')}»"[:34]
+    if act == "wait":
+        return f"انتظار {p.get('seconds', 1)} ثانية"
+    return act
+
+
+class _N8nEdgeItem(QGraphicsPathItem):
+    """Cubic Bezier wire between an output port of source_node and input port of target_node."""
+
+    def __init__(self, source_node, target_node, branch: str = "main"):
+        super().__init__()
+        self.source_node = source_node
+        self.target_node = target_node
+        self.branch = branch  # "main" | "true" | "false"
+        self.setZValue(1)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setAcceptHoverEvents(True)
+        self._hovered = False
+        self.update_position()
+
+    def _wire_color(self) -> QColor:
+        if self.isSelected() or self._hovered:
+            return QColor("#ffffff")
+        if self.branch == "true":
+            return QColor("#00ff88")
+        if self.branch == "false":
+            return QColor("#ff3366")
+        return QColor(C.PRI)
+
+    def update_position(self):
+        if not self.source_node or not self.target_node:
+            return
+        p1 = self.source_node.output_port_scene_pos(self.branch)
+        p2 = self.target_node.input_port_scene_pos()
+        dx = max(55.0, abs(p2.x() - p1.x()) * 0.5)
+        path = QPainterPath(p1)
+        path.cubicTo(QPointF(p1.x() + dx, p1.y()),
+                     QPointF(p2.x() - dx, p2.y()),
+                     p2)
+        self.setPath(path)
+
+    def hoverEnterEvent(self, e):
+        self._hovered = True
+        self.update()
+        super().hoverEnterEvent(e)
+
+    def hoverLeaveEvent(self, e):
+        self._hovered = False
+        self.update()
+        super().hoverLeaveEvent(e)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        col = self._wire_color()
+        path = self.path()
+        # Soft outer glow
+        glow = QColor(col)
+        glow.setAlpha(65 if not (self.isSelected() or self._hovered) else 130)
+        painter.setPen(QPen(glow, 6.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawPath(path)
+        # Core wire
+        painter.setPen(QPen(col, 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawPath(path)
+        # Direction chevron at midpoint
+        if path.length() > 30:
+            mid = path.pointAtPercent(0.55)
+            ang = path.angleAtPercent(0.55)
+            painter.save()
+            painter.translate(mid)
+            painter.rotate(-ang)
+            tri = QPainterPath()
+            tri.moveTo(5, 0)
+            tri.lineTo(-4, -4)
+            tri.lineTo(-4, 4)
+            tri.closeSubpath()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(col))
+            painter.drawPath(tri)
+            painter.restore()
+        # Branch badge for IF wires
+        if self.branch in ("true", "false") and path.length() > 40:
+            pt = path.pointAtPercent(0.26)
+            tag = "✓ نعم" if self.branch == "true" else "✕ لا"
+            painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+            rect = QRectF(pt.x() - 18, pt.y() - 9, 36, 17)
+            painter.setPen( QPen(col, 1.0) )
+            painter.setBrush(QBrush(QColor(0, 10, 16, 230)))
+            painter.drawRoundedRect(rect, 4, 4)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, tag)
+
+
+class _N8nNodeItem(QGraphicsObject):
+    """Draggable n8n-style node card with input/output ports and live execution state."""
+
+    W = 192
+    H = 74
+    PORT_R = 6.5
+
+    def __init__(self, canvas, node_id: str, node_type: str = "action", step: dict | None = None):
+        super().__init__()
+        self._canvas = canvas
+        self.node_id = node_id
+        self.node_type = node_type  # "trigger" | "action"
+        self.step: dict = step or {
+            "action": "browser_control",
+            "parameters": {"action": "open_with_profile", "skip_if_open": True},
+            "label": "",
+            "condition": "skip_if_open",
+            "on_failure": "continue",
+        }
+        self.exec_state: str = ""  # "" | "running" | "ok" | "error" | "skipped"
+        self._hover_port: str | None = None
+        self.setZValue(2)
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def boundingRect(self) -> QRectF:
+        m = 12
+        return QRectF(-m, -m, self.W + 2 * m, self.H + 2 * m)
+
+    def is_condition_node(self) -> bool:
+        return self.node_type == "action" and (self.step or {}).get("action") == "check_condition"
+
+    # ── Port geometry (local & scene coords) ──
+    def _in_port_local(self) -> QPointF:
+        return QPointF(0, self.H / 2)
+
+    def _out_port_local(self, branch: str = "main") -> QPointF:
+        if self.is_condition_node():
+            if branch == "false":
+                return QPointF(self.W, self.H * 0.72)
+            return QPointF(self.W, self.H * 0.30)
+        return QPointF(self.W, self.H / 2)
+
+    def input_port_scene_pos(self) -> QPointF:
+        return self.mapToScene(self._in_port_local())
+
+    def output_port_scene_pos(self, branch: str = "main") -> QPointF:
+        return self.mapToScene(self._out_port_local(branch))
+
+    def hit_port(self, local_pos: QPointF) -> str | None:
+        """Return 'in' | 'out:main' | 'out:true' | 'out:false' | None."""
+        hit_r = self.PORT_R + 5.0
+        if self.node_type != "trigger":
+            if QLineF(local_pos, self._in_port_local()).length() <= hit_r:
+                return "in"
+        if self.is_condition_node():
+            if QLineF(local_pos, self._out_port_local("true")).length() <= hit_r:
+                return "out:true"
+            if QLineF(local_pos, self._out_port_local("false")).length() <= hit_r:
+                return "out:false"
+        else:
+            if QLineF(local_pos, self._out_port_local("main")).length() <= hit_r:
+                return "out:main"
+        return None
+
+    def set_exec_state(self, state: str):
+        self.exec_state = state
+        self.update()
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        act_key = "trigger" if self.node_type == "trigger" else (self.step or {}).get("action", "wait")
+        acc_hex, icon, type_title = _NODE_ACCENT.get(act_key, (C.PRI, "⚙️", act_key))
+        acc = QColor(acc_hex)
+
+        # Execution status override border
+        state_col = {
+            "running": QColor("#00ff88"),
+            "ok":      QColor("#00ff88"),
+            "error":   QColor("#ff3355"),
+            "skipped": QColor("#ffcc00"),
+        }.get(self.exec_state)
+
+        border_col = state_col or (QColor("#ffffff") if self.isSelected() else acc)
+        rect = QRectF(0, 0, self.W, self.H)
+
+        # Outer glow when selected or running
+        if self.isSelected() or self.exec_state in ("running", "error"):
+            glow = QColor(border_col)
+            glow.setAlpha(95 if self.exec_state == "running" else 65)
+            painter.setPen(QPen(glow, 6.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(-2, -2, 2, 2), 9, 9)
+
+        # Card body
+        bg = QLinearGradient(0, 0, 0, self.H)
+        bg.setColorAt(0.0, QColor(4, 22, 34, 242))
+        bg.setColorAt(1.0, QColor(1, 11, 18, 245))
+        painter.setBrush(QBrush(bg))
+        painter.setPen(QPen(border_col, 1.8 if self.isSelected() else 1.2))
+        painter.drawRoundedRect(rect, 8, 8)
+
+        # Left accent stripe
+        stripe = QPainterPath()
+        stripe.addRoundedRect(QRectF(0, 0, 6, self.H), 4, 4)
+        painter.fillPath(stripe, QBrush(acc))
+
+        # Header band
+        painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        painter.setPen(acc)
+        painter.drawText(QRectF(12, 6, self.W - 34, 18),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         f"{icon}  {type_title}")
+
+        # Status pill on top-right
+        if self.exec_state:
+            badge_txt = {"running": "▶", "ok": "✓", "error": "✕", "skipped": "⏩"}.get(self.exec_state, "")
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            painter.setPen(state_col)
+            painter.drawText(QRectF(self.W - 26, 5, 20, 18), Qt.AlignmentFlag.AlignCenter, badge_txt)
+
+        # Custom label / summary lines
+        if self.node_type == "trigger":
+            cmd = self._canvas.trigger_summary()
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            painter.setPen(QColor(C.WHITE))
+            painter.drawText(QRectF(12, 26, self.W - 22, 20),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             cmd[:26])
+            painter.setFont(QFont("Segoe UI", 7))
+            painter.setPen(QColor(C.TEXT_DIM))
+            painter.drawText(QRectF(12, 46, self.W - 22, 18),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             self._canvas.interval_summary())
+        else:
+            lbl = ((self.step or {}).get("label") or "").strip()
+            summary = _summarize_step_dict(self.step)
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            painter.setPen(QColor(C.WHITE))
+            painter.drawText(QRectF(12, 26, self.W - 24, 20),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             (lbl or summary)[:26])
+            painter.setFont(QFont("Segoe UI", 7))
+            painter.setPen(QColor(C.TEXT_MED))
+            painter.drawText(QRectF(12, 46, self.W - 24, 18),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             summary[:30])
+
+        # Draw ports
+        def _draw_port(pt: QPointF, col: QColor, tag: str = "", hovered: bool = False):
+            r = self.PORT_R + (2.0 if hovered else 0.0)
+            painter.setPen(QPen(QColor("#000a10"), 1.5))
+            painter.setBrush(QBrush(col if not hovered else QColor("#ffffff")))
+            painter.drawEllipse(pt, r, r)
+            if tag:
+                painter.setFont(QFont("Segoe UI", 6, QFont.Weight.Bold))
+                painter.setPen(col)
+                painter.drawText(QRectF(pt.x() - 28, pt.y() - 8, 20, 16),
+                                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, tag)
+
+        if self.node_type != "trigger":
+            _draw_port(self._in_port_local(), QColor(C.PRI),
+                       hovered=(self._hover_port == "in"))
+
+        if self.is_condition_node():
+            _draw_port(self._out_port_local("true"), QColor("#00ff88"), "نعم",
+                       hovered=(self._hover_port == "out:true"))
+            _draw_port(self._out_port_local("false"), QColor("#ff3366"), "لا",
+                       hovered=(self._hover_port == "out:false"))
+        else:
+            _draw_port(self._out_port_local("main"), acc,
+                       hovered=(self._hover_port == "out:main"))
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            self._canvas.on_node_moved(self)
+        elif change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            self._canvas.on_node_selection_changed()
+        return super().itemChange(change, value)
+
+    def hoverMoveEvent(self, e):
+        hp = self.hit_port(e.pos())
+        if hp != self._hover_port:
+            self._hover_port = hp
+            self.setCursor(Qt.CursorShape.CrossCursor if hp else Qt.CursorShape.OpenHandCursor)
+            self.update()
+        super().hoverMoveEvent(e)
+
+    def hoverLeaveEvent(self, e):
+        self._hover_port = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.update()
+        super().hoverLeaveEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            hp = self.hit_port(e.pos())
+            if hp and hp.startswith("out:"):
+                branch = hp.split(":", 1)[1]
+                self._canvas.begin_wire_drag(self, branch, e.scenePos())
+                e.accept()
+                return
+            if hp == "in":
+                # Detach an existing incoming wire so the user can re-route it
+                if self._canvas.detach_incoming_wire(self, e.scenePos()):
+                    e.accept()
+                    return
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().mouseReleaseEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        self._canvas.focus_inspector_for(self)
+        super().mouseDoubleClickEvent(e)
+
+
+class _N8nGraphicsView(QGraphicsView):
+    """Pannable, zoomable n8n canvas with a dark dot/grid background."""
+
+    def __init__(self, scene: QGraphicsScene, canvas_owner):
+        super().__init__(scene)
+        self._owner = canvas_owner
+        self._panning = False
+        self._pan_start = QPointF()
+        self._zoom = 1.0
+        self.setRenderHints(
+            QPainter.RenderHint.Antialiasing
+            | QPainter.RenderHint.TextAntialiasing
+            | QPainter.RenderHint.SmoothPixmapTransform
+        )
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setStyleSheet(f"background: #00070c; border: 1px solid {C.BORDER_B}; border-radius: 5px;")
+
+    def drawBackground(self, painter: QPainter, rect: QRectF):
+        painter.fillRect(rect, QColor("#00070c"))
+        step = 24
+        left = int(rect.left()) - (int(rect.left()) % step)
+        top = int(rect.top()) - (int(rect.top()) % step)
+        # Minor dots
+        dot_pen = QPen(QColor(0, 212, 255, 38), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(dot_pen)
+        pts = []
+        x = left
+        while x < rect.right():
+            y = top
+            while y < rect.bottom():
+                pts.append(QPointF(x, y))
+                y += step
+            x += step
+        if pts:
+            painter.drawPoints(pts)
+
+    def wheelEvent(self, e):
+        factor = 1.14 if e.angleDelta().y() > 0 else (1.0 / 1.14)
+        new_z = self._zoom * factor
+        if 0.40 <= new_z <= 2.2:
+            self._zoom = new_z
+            self.scale(factor, factor)
+        e.accept()
+
+    def zoom_by(self, factor: float):
+        new_z = max(0.40, min(2.2, self._zoom * factor))
+        real = new_z / self._zoom
+        self._zoom = new_z
+        self.scale(real, real)
+
+    def reset_zoom(self):
+        self.resetTransform()
+        self._zoom = 1.0
+
+    def mousePressEvent(self, e):
+        if e.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+            it = self.itemAt(e.pos())
+            if e.button() == Qt.MouseButton.RightButton and isinstance(it, _N8nEdgeItem):
+                self._owner.remove_edge(it)
+                e.accept()
+                return
+            self._panning = True
+            self._pan_start = e.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            e.accept()
+            return
+        if e.button() == Qt.MouseButton.LeftButton and self.itemAt(e.pos()) is None:
+            self._panning = True
+            self._pan_start = e.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._owner.is_wiring():
+            self._owner.update_wire_drag(self.mapToScene(e.pos()))
+            e.accept()
+            return
+        if self._panning:
+            delta = e.position() - self._pan_start
+            self._pan_start = e.position()
+            self.horizontalScrollBar().setValue(int(self.horizontalScrollBar().value() - delta.x()))
+            self.verticalScrollBar().setValue(int(self.verticalScrollBar().value() - delta.y()))
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._owner.is_wiring() and e.button() == Qt.MouseButton.LeftButton:
+            self._owner.end_wire_drag(self.mapToScene(e.pos()))
+            e.accept()
+            return
+        if self._panning:
+            self._panning = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseReleaseEvent(e)
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self._owner.delete_selected()
+            e.accept()
+            return
+        super().keyPressEvent(e)
+
+
+class _N8nCanvasWidget(QWidget):
+    """Full n8n map editor: palette bar + interactive graph canvas + node inspector."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, overlay):
+        super().__init__(overlay)
+        self._overlay = overlay
+        self._node_items: dict[str, _N8nNodeItem] = {}
+        self._edge_items: list[_N8nEdgeItem] = []
+        self._seq = 1
+        self._wire_src: _N8nNodeItem | None = None
+        self._wire_branch: str = "main"
+        self._temp_wire: QGraphicsPathItem | None = None
+        self._syncing_inspector = False
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(5)
+
+        # ── Quick-Add Node Palette + Map Controls ──
+        pal = QHBoxLayout()
+        pal.setSpacing(4)
+
+        palette_defs = [
+            ("🌐 متصفح", "browser_control", {"action": "open_with_profile", "skip_if_open": True}),
+            ("🔍 شرط IF", "check_condition", {"target": "", "check_type": "is_open", "on_met": "skip_next"}),
+            ("👆 نقر", "click_element", {"target": "", "method": "vision"}),
+            ("🔄 تحديث", "refresh_page", {"action": "reload"}),
+            ("👁 رؤية", "computer_control", {"action": "read_screen", "question": ""}),
+            ("🚀 تطبيق", "open_app", {"app_name": "", "skip_if_open": True}),
+            ("🤖 جارفيس", "jarvis_command", {"command": ""}),
+            ("✈️ تليجرام", "telegram_send", {"message": ""}),
+            ("💬 رسالة", "send_message", {"target": "", "message": ""}),
+            ("⏱ انتظار", "wait", {"seconds": 3}),
+        ]
+        for label, act, default_params in palette_defs:
+            acc_hex = _NODE_ACCENT.get(act, (C.PRI,))[0]
+            b = QPushButton(f"+ {label}")
+            b.setFixedHeight(23)
+            b.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(0, 18, 28, 210); color: {acc_hex};
+                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 0 6px;
+                }}
+                QPushButton:hover {{
+                    background: {C.PRI_GHO}; border-color: {acc_hex}; color: #ffffff;
+                }}
+            """)
+            b.clicked.connect(lambda _, a=act, p=default_params: self.add_action_node(a, dict(p)))
+            pal.addWidget(b)
+
+        pal.addStretch()
+
+        for txt, tip, fn in [
+            ("✨ ترتيب", "ترتيب الخريطة تلقائياً", self.auto_layout),
+            ("🔍+", "تكبير", lambda: self._view.zoom_by(1.18)),
+            ("🔍-", "تصغير", lambda: self._view.zoom_by(1 / 1.18)),
+            ("🎯", "توسيط الخريطة", self.fit_all),
+            ("🗑", "حذف النود أو السلك المحدد (Delete)", self.delete_selected),
+        ]:
+            tb = QPushButton(txt)
+            tb.setToolTip(tip)
+            tb.setFixedHeight(23)
+            tb.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+            tb.setCursor(Qt.CursorShape.PointingHandCursor)
+            tb.setStyleSheet(f"""
+                QPushButton {{
+                    background: #00111c; color: {C.TEXT_MED};
+                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 0 6px;
+                }}
+                QPushButton:hover {{ color: {C.WHITE}; border-color: {C.PRI}; }}
+            """)
+            tb.clicked.connect(fn)
+            pal.addWidget(tb)
+
+        lay.addLayout(pal)
+
+        # Hint strip
+        hint = QLabel(
+            "💡 اسحب النود لتحريكها • اسحب من الدائرة اليمنى للدائرة اليسرى للتوصيل • "
+            "نود الشرط (IF) لها مخرجين: ✓ نعم (أخضر) و ✕ لا (أحمر) • كليك يمين على أي سلك لحذفه"
+        )
+        hint.setFont(QFont("Segoe UI", 7))
+        hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(hint)
+
+        # ── Graphics Scene + View ──
+        self._scene = QGraphicsScene(-1200, -800, 3200, 2200, self)
+        self._view = _N8nGraphicsView(self._scene, self)
+        self._view.setMinimumHeight(235)
+        lay.addWidget(self._view, stretch=1)
+
+        # ── Selected Node Inspector ──
+        self._insp_frame = QFrame()
+        self._insp_frame.setStyleSheet(f"""
+            QFrame {{
+                background: rgba(0, 14, 22, 220);
+                border: 1px solid {C.BORDER_B}; border-radius: 5px;
+            }}
+        """)
+        ilay = QVBoxLayout(self._insp_frame)
+        ilay.setContentsMargins(8, 5, 8, 6)
+        ilay.setSpacing(3)
+
+        ihdr = QHBoxLayout()
+        self._insp_title = QLabel("⚙ خصائص النود المحددة — اضغط على أي نود في الخريطة لتعديل إعداداتها")
+        self._insp_title.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        self._insp_title.setStyleSheet(f"color: {C.PRI}; border: none; background: transparent;")
+        ihdr.addWidget(self._insp_title)
+        ihdr.addStretch()
+
+        self._insp_del_btn = QPushButton("🗑 حذف النود")
+        self._insp_del_btn.setFixedHeight(20)
+        self._insp_del_btn.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        self._insp_del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._insp_del_btn.setStyleSheet("""
+            QPushButton { background: transparent; color: #ff5555; border: 1px solid #552222; border-radius: 3px; padding: 0 6px; }
+            QPushButton:hover { background: #552222; color: #ffffff; }
+        """)
+        self._insp_del_btn.clicked.connect(self.delete_selected)
+        ihdr.addWidget(self._insp_del_btn)
+        ilay.addLayout(ihdr)
+
+        # Reuse _FlowNodeWidget as the parameter editor for the selected action node
+        self._inspector = _FlowNodeWidget(step_idx=1)
+        self._inspector._btn_up.hide()
+        self._inspector._btn_down.hide()
+        self._inspector._btn_del.hide()
+        self._inspector.changed.connect(self._on_inspector_edited)
+        ilay.addWidget(self._inspector)
+        self._inspector.setVisible(False)
+
+        lay.addWidget(self._insp_frame)
+
+    # ── Summaries from the parent overlay's trigger fields ──
+    def trigger_summary(self) -> str:
+        t = self._overlay._start_cmd_edit.text().strip() if hasattr(self._overlay, "_start_cmd_edit") else ""
+        return f"▶ {t}" if t else "▶ (أمر البدء)"
+
+    def interval_summary(self) -> str:
+        secs = self._overlay._get_interval_seconds() if hasattr(self._overlay, "_get_interval_seconds") else 0
+        return f"🔄 يتكرر كل {secs} ثانية" if secs > 0 else "⚡ يعمل مرة واحدة (بدون تكرار)"
+
+    def refresh_trigger_card(self):
+        trig = self._node_items.get("trigger")
+        if trig:
+            trig.update()
+
+    # ── Graph manipulation ──
+    def clear_graph(self, with_default: bool = True):
+        for e in list(self._edge_items):
+            self._scene.removeItem(e)
+        self._edge_items.clear()
+        for n in list(self._node_items.values()):
+            self._scene.removeItem(n)
+        self._node_items.clear()
+        self._seq = 1
+        self._inspector.setVisible(False)
+        if with_default:
+            trig = self._create_node("trigger", "trigger", None, QPointF(40, 90))
+            first = self._create_node("node_1", "action", {
+                "action": "browser_control",
+                "parameters": {"action": "open_with_profile", "skip_if_open": True},
+                "label": "",
+                "condition": "skip_if_open",
+                "on_failure": "continue",
+            }, QPointF(290, 90))
+            self._create_edge(trig, first, "main")
+            first.setSelected(True)
+            QTimer.singleShot(30, self.fit_all)
+        self.changed.emit()
+
+    def _next_id(self) -> str:
+        while f"node_{self._seq}" in self._node_items:
+            self._seq += 1
+        nid = f"node_{self._seq}"
+        self._seq += 1
+        return nid
+
+    def _create_node(self, nid: str, ntype: str, step: dict | None, pos: QPointF) -> _N8nNodeItem:
+        item = _N8nNodeItem(self, nid, ntype, step)
+        item.setPos(pos)
+        self._scene.addItem(item)
+        self._node_items[nid] = item
+        return item
+
+    def _create_edge(self, src: _N8nNodeItem, dst: _N8nNodeItem, branch: str = "main") -> _N8nEdgeItem | None:
+        if src is dst or dst.node_type == "trigger":
+            return None
+        for e in self._edge_items:
+            if e.source_node is src and e.target_node is dst and e.branch == branch:
+                return e
+        edge = _N8nEdgeItem(src, dst, branch)
+        self._scene.addItem(edge)
+        self._edge_items.append(edge)
+        return edge
+
+    def add_action_node(self, action: str, params: dict | None = None):
+        nid = self._next_id()
+        step = {
+            "action": action,
+            "parameters": params or {},
+            "label": "",
+            "condition": "skip_if_open" if (params or {}).get("skip_if_open") else "",
+            "on_failure": "continue",
+        }
+        # Place to the right of the currently selected node (or rightmost node)
+        sel = self.selected_node()
+        if sel is None and self._node_items:
+            sel = max(self._node_items.values(), key=lambda n: n.pos().x())
+        if sel is not None:
+            out_branch = "true" if sel.is_condition_node() else "main"
+            existing_outs = [e for e in self._edge_items if e.source_node is sel]
+            y_off = 95 * len(existing_outs)
+            if sel.is_condition_node() and any(e.branch == "true" for e in existing_outs) and not any(e.branch == "false" for e in existing_outs):
+                out_branch = "false"
+                y_off = 95
+            pos = QPointF(sel.pos().x() + 245, sel.pos().y() + y_off)
+        else:
+            pos = QPointF(290, 90)
+
+        node = self._create_node(nid, "action", step, pos)
+        if sel is not None:
+            self._create_edge(sel, node, out_branch)
+        self._scene.clearSelection()
+        node.setSelected(True)
+        self._view.ensureVisible(node, 40, 40)
+        self.changed.emit()
+
+    def selected_node(self) -> _N8nNodeItem | None:
+        for it in self._scene.selectedItems():
+            if isinstance(it, _N8nNodeItem):
+                return it
+        return None
+
+    def remove_edge(self, edge: _N8nEdgeItem):
+        if edge in self._edge_items:
+            self._edge_items.remove(edge)
+            self._scene.removeItem(edge)
+            self.changed.emit()
+
+    def delete_selected(self):
+        removed = False
+        for it in list(self._scene.selectedItems()):
+            if isinstance(it, _N8nEdgeItem):
+                self.remove_edge(it)
+                removed = True
+            elif isinstance(it, _N8nNodeItem):
+                if it.node_type == "trigger":
+                    continue
+                for e in [e for e in self._edge_items if e.source_node is it or e.target_node is it]:
+                    self.remove_edge(e)
+                self._node_items.pop(it.node_id, None)
+                self._scene.removeItem(it)
+                removed = True
+        if removed:
+            self.on_node_selection_changed()
+            self.changed.emit()
+
+    # ── Interactive wire dragging ──
+    def is_wiring(self) -> bool:
+        return self._wire_src is not None
+
+    def begin_wire_drag(self, src_node: _N8nNodeItem, branch: str, scene_pos: QPointF):
+        self._wire_src = src_node
+        self._wire_branch = branch
+        self._temp_wire = QGraphicsPathItem()
+        col = QColor("#00ff88") if branch == "true" else (QColor("#ff3366") if branch == "false" else QColor(C.PRI))
+        pen = QPen(col, 2.2, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap)
+        self._temp_wire.setPen(pen)
+        self._temp_wire.setZValue(10)
+        self._scene.addItem(self._temp_wire)
+        self.update_wire_drag(scene_pos)
+
+    def detach_incoming_wire(self, dst_node: _N8nNodeItem, scene_pos: QPointF) -> bool:
+        incoming = [e for e in self._edge_items if e.target_node is dst_node]
+        if not incoming:
+            return False
+        edge = incoming[-1]
+        src, branch = edge.source_node, edge.branch
+        self.remove_edge(edge)
+        self.begin_wire_drag(src, branch, scene_pos)
+        return True
+
+    def update_wire_drag(self, scene_pos: QPointF):
+        if not self._wire_src or not self._temp_wire:
+            return
+        p1 = self._wire_src.output_port_scene_pos(self._wire_branch)
+        p2 = scene_pos
+        dx = max(45.0, abs(p2.x() - p1.x()) * 0.5)
+        path = QPainterPath(p1)
+        path.cubicTo(QPointF(p1.x() + dx, p1.y()), QPointF(p2.x() - dx, p2.y()), p2)
+        self._temp_wire.setPath(path)
+
+    def end_wire_drag(self, scene_pos: QPointF):
+        if self._temp_wire:
+            self._scene.removeItem(self._temp_wire)
+            self._temp_wire = None
+        src = self._wire_src
+        branch = self._wire_branch
+        self._wire_src = None
+        if src is None:
+            return
+        # Find target node under release point
+        for item in self._scene.items(scene_pos):
+            if isinstance(item, _N8nNodeItem) and item is not src and item.node_type != "trigger":
+                self._create_edge(src, item, branch)
+                self.changed.emit()
+                break
+
+    def on_node_moved(self, node: _N8nNodeItem):
+        for e in self._edge_items:
+            if e.source_node is node or e.target_node is node:
+                e.update_position()
+
+    def on_node_selection_changed(self):
+        node = self.selected_node()
+        if node is None or node.node_type == "trigger":
+            self._inspector.setVisible(False)
+            self._insp_del_btn.setEnabled(False)
+            if node and node.node_type == "trigger":
+                self._insp_title.setText("⚡ نود البداية (START TRIGGER) — عدّل أمر البدء والفاصل الزمني من الشريط العلوي")
+            else:
+                self._insp_title.setText("⚙ خصائص النود المحددة — اضغط على أي نود في الخريطة لتعديل إعداداتها")
+            return
+        from core.flow_engine import FlowStep
+        self._syncing_inspector = True
+        try:
+            self._inspector.from_step(FlowStep.from_dict(node.step))
+            self._inspector._badge.setText(node.node_id.upper())
+            self._inspector.setVisible(True)
+            self._insp_del_btn.setEnabled(True)
+            act = (node.step or {}).get("action", "")
+            _, icon, title = _NODE_ACCENT.get(act, (C.PRI, "⚙️", act))
+            self._insp_title.setText(f"⚙ تعديل نود [{node.node_id.upper()}] — {icon} {title}")
+        finally:
+            self._syncing_inspector = False
+
+    def focus_inspector_for(self, node: _N8nNodeItem):
+        self._scene.clearSelection()
+        node.setSelected(True)
+        self._inspector._label_edit.setFocus()
+
+    def _on_inspector_edited(self):
+        if self._syncing_inspector:
+            return
+        node = self.selected_node()
+        if node is None or node.node_type == "trigger":
+            return
+        was_cond = node.is_condition_node()
+        node.step = self._inspector.to_step().to_dict()
+        now_cond = node.is_condition_node()
+        if was_cond != now_cond:
+            for e in self._edge_items:
+                if e.source_node is node:
+                    e.branch = "true" if now_cond else "main"
+                    e.update_position()
+        node.update()
+        self.changed.emit()
+
+    # ── Layout & Viewport helpers ──
+    def auto_layout(self):
+        """Arrange nodes left-to-right in BFS layers from the trigger."""
+        trig = self._node_items.get("trigger")
+        out: dict[str, list[tuple[str, str]]] = {}
+        for e in self._edge_items:
+            out.setdefault(e.source_node.node_id, []).append((e.target_node.node_id, e.branch))
+        levels: dict[str, int] = {}
+        y_hint: dict[str, float] = {}
+        q = ["trigger"] if trig else list(self._node_items.keys())[:1]
+        for s_id in q:
+            levels[s_id] = 0
+            y_hint[s_id] = 0.0
+        visited = set(q)
+        while q:
+            cur = q.pop(0)
+            for idx, (nxt, br) in enumerate(out.get(cur, [])):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    levels[nxt] = levels.get(cur, 0) + 1
+                    offset = -0.6 if br == "true" else (0.6 if br == "false" else (idx * 0.8))
+                    y_hint[nxt] = y_hint.get(cur, 0.0) + offset
+                    q.append(nxt)
+        for nid in self._node_items:
+            if nid not in levels:
+                levels[nid] = (max(levels.values()) + 1) if levels else 1
+                y_hint[nid] = 0.0
+        by_col: dict[int, list[str]] = {}
+        for nid, col in levels.items():
+            by_col.setdefault(col, []).append(nid)
+        for col, nids in by_col.items():
+            nids.sort(key=lambda k: y_hint.get(k, 0.0))
+            for row, nid in enumerate(nids):
+                y = 90 + (row - (len(nids) - 1) / 2.0) * 105
+                self._node_items[nid].setPos(QPointF(40 + col * 245, y))
+        self.fit_all()
+
+    def fit_all(self):
+        if not self._node_items:
+            return
+        rect = QRectF()
+        for n in self._node_items.values():
+            r = n.sceneBoundingRect()
+            rect = rect.united(r) if not rect.isNull() else r
+        rect.adjust(-45, -35, 55, 35)
+        self._view.reset_zoom()
+        self._view.centerOn(rect.center())
+
+    # ── Serialization to/from FlowEngine ──
+    def to_graph_and_steps(self) -> tuple[dict, list]:
+        from core.flow_engine import FlowStep, linearize_graph
+        nodes_data = []
+        for nid, item in self._node_items.items():
+            nodes_data.append({
+                "id": nid,
+                "type": item.node_type,
+                "x": round(float(item.pos().x()), 1),
+                "y": round(float(item.pos().y()), 1),
+                "step": item.step if item.node_type != "trigger" else {},
+            })
+        edges_data = [
+            {
+                "from": e.source_node.node_id,
+                "to": e.target_node.node_id,
+                "branch": e.branch,
+            }
+            for e in self._edge_items
+            if e.source_node.node_id in self._node_items and e.target_node.node_id in self._node_items
+        ]
+        graph = {"nodes": nodes_data, "edges": edges_data}
+        step_dicts = linearize_graph(graph)
+        steps = [FlowStep.from_dict(sd) for sd in step_dicts]
+        return graph, steps
+
+    def load_from_flow(self, flow):
+        self.clear_graph(with_default=False)
+        graph = getattr(flow, "graph", None) or {}
+        if graph.get("nodes"):
+            for nd in graph.get("nodes", []):
+                nid = nd.get("id") or self._next_id()
+                ntype = nd.get("type", "action")
+                pos = QPointF(float(nd.get("x", 60)), float(nd.get("y", 90)))
+                self._create_node(nid, ntype, nd.get("step") or {}, pos)
+            if "trigger" not in self._node_items:
+                self._create_node("trigger", "trigger", None, QPointF(40, 90))
+            for ed in graph.get("edges", []):
+                s_it = self._node_items.get(ed.get("from"))
+                t_it = self._node_items.get(ed.get("to"))
+                if s_it and t_it:
+                    self._create_edge(s_it, t_it, ed.get("branch", "main"))
+        else:
+            # Convert legacy linear steps into a connected map automatically
+            prev = self._create_node("trigger", "trigger", None, QPointF(40, 90))
+            prev_branch = "main"
+            for idx, st in enumerate(flow.steps or [], 1):
+                sd = st.to_dict() if hasattr(st, "to_dict") else dict(st)
+                node = self._create_node(f"node_{idx}", "action", sd, QPointF(40 + idx * 245, 90))
+                self._create_edge(prev, node, prev_branch)
+                prev = node
+                prev_branch = "true" if sd.get("action") == "check_condition" else "main"
+                self._seq = idx + 1
+        # Select first action node
+        for n in self._node_items.values():
+            if n.node_type == "action":
+                n.setSelected(True)
+                break
+        QTimer.singleShot(30, self.fit_all)
+        self.changed.emit()
+
+    def set_node_exec_state(self, node_id: str, state: str):
+        if node_id == "__cycle__":
+            for n in self._node_items.values():
+                n.set_exec_state("ok" if n.node_type == "trigger" else "")
+            return
+        it = self._node_items.get(node_id)
+        if it:
+            it.set_exec_state(state)
 
 
 class AutomationFlowOverlay(QWidget):
     """Floating Sci-Fi overlay for Autonomous Automation Flow Maps (n8n-style engine)."""
 
-    _OW = 660
-    _OH = 620
+    _OW = 820
+    _OH = 660
+    _node_state_sig = pyqtSignal(str, str, str)
 
     def __init__(self, parent=None, player=None):
         super().__init__(parent)
         self._player = player
         self._current_flow_id: str | None = None
         self._nodes: list[_FlowNodeWidget] = []
+        self._node_state_sig.connect(self._on_node_state_ui)
+        try:
+            from core.flow_engine import FlowEngine
+            FlowEngine.get_instance().add_node_listener(
+                lambda fid, nid, st: self._node_state_sig.emit(fid, nid, st)
+            )
+        except Exception:
+            pass
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
@@ -3139,7 +4159,7 @@ class AutomationFlowOverlay(QWidget):
         self._btn_tab_library.clicked.connect(lambda: self._switch_tab(0))
         tab_row.addWidget(self._btn_tab_library, stretch=1)
 
-        self._btn_tab_builder = QPushButton("🛠 مصمم السلاسل / VISUAL BUILDER")
+        self._btn_tab_builder = QPushButton("🗺 خريطة الفلو (n8n) / FLOW MAP BUILDER")
         self._btn_tab_builder.setFixedHeight(28)
         self._btn_tab_builder.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         self._btn_tab_builder.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3208,7 +4228,7 @@ class AutomationFlowOverlay(QWidget):
         if index == 0:
             self._refresh_library()
         elif index == 1:
-            if not self._nodes:
+            if not hasattr(self, "_canvas") or not self._canvas._node_items:
                 self._reset_builder()
             else:
                 self._update_live_explanation()
@@ -3388,6 +4408,31 @@ class AutomationFlowOverlay(QWidget):
         lay.setContentsMargins(0, 4, 0, 0)
         lay.setSpacing(6)
 
+        top_bar = QHBoxLayout()
+        top_bar.setSpacing(6)
+        lib_hint = QLabel("البرامج المحفوظة — اضغط تشغيل أو افتح أي فلو على الخريطة التفاعلية:")
+        lib_hint.setFont(QFont("Segoe UI", 8))
+        lib_hint.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        top_bar.addWidget(lib_hint)
+        top_bar.addStretch()
+
+        new_map_btn = QPushButton("➕ إنشاء فلو جديد على الخريطة (n8n Map)")
+        new_map_btn.setFixedHeight(26)
+        new_map_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        new_map_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        new_map_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {C.PRI_GHO}; color: {C.PRI};
+                border: 1px solid {C.PRI}; border-radius: 4px; padding: 0 12px;
+            }}
+            QPushButton:hover {{
+                background: {C.PRI}; color: #000b12;
+            }}
+        """)
+        new_map_btn.clicked.connect(self._create_new_on_map)
+        top_bar.addWidget(new_map_btn)
+        lay.addLayout(top_bar)
+
         self._library_scroll = QScrollArea()
         self._library_scroll.setWidgetResizable(True)
         self._library_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
@@ -3518,7 +4563,10 @@ class AutomationFlowOverlay(QWidget):
                 badges_row.addWidget(_badge_lbl(f"▶ أمر البدء: {f.start_command}", C.TEXT, C.BORDER_B))
             if f.stop_command:
                 badges_row.addWidget(_badge_lbl(f"⏹ أمر الإيقاف: {f.stop_command}", C.MUTED_C, "#661122"))
-            badges_row.addWidget(_badge_lbl(f"⏱ كل {f.interval_seconds}ث", C.ACC2, C.BORDER))
+            if f.interval_seconds and f.interval_seconds > 0:
+                badges_row.addWidget(_badge_lbl(f"🔄 كل {f.interval_seconds}ث", C.ACC2, C.BORDER))
+            else:
+                badges_row.addWidget(_badge_lbl("⚡ مرة واحدة (بدون تكرار)", C.GREEN, C.BORDER))
             badges_row.addWidget(_badge_lbl(f"🔄 {f.run_count} دورة", C.TEXT_DIM, C.BORDER))
             badges_row.addWidget(_badge_lbl(f"⚡ {len(f.steps)} خطوات", C.PRI_DIM, C.BORDER))
             badges_row.addStretch()
@@ -3572,8 +4620,8 @@ class AutomationFlowOverlay(QWidget):
             exp_btn.clicked.connect(lambda _, flow=f: self._show_explanation_dialog(flow))
             btn_row.addWidget(exp_btn)
 
-            # Edit
-            edit_btn = QPushButton("✏ تعديل")
+            # Edit on Map
+            edit_btn = QPushButton("🗺 خريطة وتعديل")
             edit_btn.setFont(QFont("Segoe UI", 7))
             edit_btn.setFixedHeight(22)
             edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3733,14 +4781,14 @@ class AutomationFlowOverlay(QWidget):
         dlg.exec()
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 2: VISUAL BUILDER (N8N STYLE)
+    # TAB 2: VISUAL BUILDER (N8N INTERACTIVE NODE MAP)
     # ──────────────────────────────────────────────────────────────────────────
 
     def _build_builder_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 4, 0, 0)
-        lay.setSpacing(6)
+        lay.setSpacing(5)
 
         _f_style = f"""
             QLineEdit {{
@@ -3751,166 +4799,93 @@ class AutomationFlowOverlay(QWidget):
             QLineEdit:focus {{ border-color: {C.PRI}; }}
         """
 
-        # Scroll Area for Metadata + Nodes Pipeline + Live Preview
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-
-        container = QWidget()
-        container.setStyleSheet("background: transparent;")
-        c_lay = QVBoxLayout(container)
-        c_lay.setContentsMargins(0, 0, 4, 0)
-        c_lay.setSpacing(8)
-
-        # 1. Flow Metadata Card
+        # 1. Compact Flow Metadata Strip
         meta_box = QFrame()
         meta_box.setStyleSheet(f"""
             QFrame {{
-                background: rgba(0, 14, 22, 190);
+                background: rgba(0, 14, 22, 195);
                 border: 1px solid {C.BORDER}; border-radius: 5px;
             }}
         """)
         m_lay = QVBoxLayout(meta_box)
-        m_lay.setContentsMargins(10, 8, 10, 8)
-        m_lay.setSpacing(5)
+        m_lay.setContentsMargins(8, 6, 8, 6)
+        m_lay.setSpacing(4)
 
-        m_hdr = QLabel("▸ بيانات البرنامج والمشغلات (FLOW TRIGGER & METADATA)")
-        m_hdr.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        m_hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none;")
-        m_lay.addWidget(m_hdr)
-
-        r1 = QHBoxLayout(); r1.setSpacing(6)
+        r1 = QHBoxLayout(); r1.setSpacing(5)
         self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("اسم البرنامج (مثال: مراقبة متجر شوبيفاي)")
+        self._name_edit.setPlaceholderText("اسم الفلو (مثال: مراقبة شوبيفاي)")
         self._name_edit.setStyleSheet(_f_style)
         self._name_edit.textChanged.connect(self._update_live_explanation)
         r1.addWidget(self._name_edit, stretch=2)
 
         self._desc_edit = QLineEdit()
-        self._desc_edit.setPlaceholderText("الوصف المختصر للوظيفة والغرض")
+        self._desc_edit.setPlaceholderText("وصف مختصر (اختياري)")
         self._desc_edit.setStyleSheet(_f_style)
-        r1.addWidget(self._desc_edit, stretch=3)
+        r1.addWidget(self._desc_edit, stretch=2)
+
+        self._repeat_btn = QPushButton()
+        self._repeat_btn.setCheckable(True)
+        self._repeat_btn.setChecked(False)
+        self._repeat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._repeat_btn.setFixedHeight(24)
+        self._repeat_btn.toggled.connect(self._on_repeat_mode_toggled)
+        r1.addWidget(self._repeat_btn)
+
+        self._interval_edit = QLineEdit("60")
+        self._interval_edit.setFixedWidth(52)
+        self._interval_edit.setPlaceholderText("ثواني")
+        self._interval_edit.setStyleSheet(_f_style)
+        self._interval_edit.textChanged.connect(self._on_trigger_meta_edited)
+        r1.addWidget(self._interval_edit)
+        self._sync_repeat_ui()
         m_lay.addLayout(r1)
 
-        r2 = QHBoxLayout(); r2.setSpacing(6)
+        r2 = QHBoxLayout(); r2.setSpacing(5)
         self._start_cmd_edit = QLineEdit()
-        self._start_cmd_edit.setPlaceholderText("أمر البدء من الشات (مثال: ابدأ مراقبة شوبيفاي)")
+        self._start_cmd_edit.setPlaceholderText("▶ أمر التشغيل من الشات أو التليجرام (مثال: ابدأ مراقبة شوبيفاي)")
         self._start_cmd_edit.setStyleSheet(_f_style)
-        self._start_cmd_edit.textChanged.connect(self._update_live_explanation)
+        self._start_cmd_edit.textChanged.connect(self._on_trigger_meta_edited)
         r2.addWidget(self._start_cmd_edit, stretch=1)
 
         self._stop_cmd_edit = QLineEdit()
-        self._stop_cmd_edit.setPlaceholderText("أمر الإيقاف من الشات (مثال: وقف مراقبة شوبيفاي)")
+        self._stop_cmd_edit.setPlaceholderText("⏹ أمر الإيقاف (اختياري لو الفلو بيشتغل مرة واحدة)")
         self._stop_cmd_edit.setStyleSheet(_f_style)
         self._stop_cmd_edit.textChanged.connect(self._update_live_explanation)
         r2.addWidget(self._stop_cmd_edit, stretch=1)
         m_lay.addLayout(r2)
 
-        r3 = QHBoxLayout(); r3.setSpacing(6)
-        r3_lbl = QLabel("فاصل التكرار (ثوانٍ):")
-        r3_lbl.setFont(QFont("Segoe UI", 7))
-        r3_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
-        r3.addWidget(r3_lbl)
-        self._interval_edit = QLineEdit("60")
-        self._interval_edit.setFixedWidth(80)
-        self._interval_edit.setStyleSheet(_f_style)
-        self._interval_edit.textChanged.connect(self._update_live_explanation)
-        r3.addWidget(self._interval_edit)
+        lay.addWidget(meta_box)
 
-        r3_hint = QLabel("• يتم تكرار مسار الخطوات كاملاً كل فاصل زمني حتى يتلقى أمر الإيقاف من الشات.")
-        r3_hint.setFont(QFont("Segoe UI", 7))
-        r3_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
-        r3.addWidget(r3_hint, stretch=1)
-        m_lay.addLayout(r3)
+        # 2. Interactive n8n Node Map Canvas + Inspector
+        self._canvas = _N8nCanvasWidget(self)
+        self._canvas.changed.connect(self._update_live_explanation)
+        lay.addWidget(self._canvas, stretch=1)
 
-        c_lay.addWidget(meta_box)
-
-        # 2. Nodes Chain Section
-        pipe_box = QFrame()
-        pipe_box.setStyleSheet(f"""
-            QFrame {{
-                background: rgba(0, 10, 18, 160);
-                border: 1px solid {C.BORDER}; border-radius: 5px;
-            }}
-        """)
-        p_lay = QVBoxLayout(pipe_box)
-        p_lay.setContentsMargins(10, 8, 10, 8)
-        p_lay.setSpacing(6)
-
-        p_hdr = QHBoxLayout()
-        p_title = QLabel("▸ مسار خطوات التنفيذ (N8N EXECUTION PIPELINE)")
-        p_title.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        p_title.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none;")
-        p_hdr.addWidget(p_title)
-        p_hdr.addStretch()
-
-        add_node_btn = QPushButton("➕ إضافة خطوة (ADD NODE)")
-        add_node_btn.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
-        add_node_btn.setFixedHeight(22)
-        add_node_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_node_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {C.PRI_GHO}; color: {C.PRI};
-                border: 1px solid {C.PRI_DIM}; border-radius: 3px; padding: 0 6px;
-            }}
-            QPushButton:hover {{
-                background: rgba(0, 212, 255, 0.25); border-color: {C.PRI}; color: #ffffff;
-            }}
-        """)
-        add_node_btn.clicked.connect(lambda: self._add_node())
-        p_hdr.addWidget(add_node_btn)
-        p_lay.addLayout(p_hdr)
-
-        self._nodes_container = QWidget()
-        self._nodes_container.setStyleSheet("background: transparent; border: none;")
-        self._nodes_lay = QVBoxLayout(self._nodes_container)
-        self._nodes_lay.setContentsMargins(0, 4, 0, 4)
-        self._nodes_lay.setSpacing(4)
-        p_lay.addWidget(self._nodes_container)
-
-        c_lay.addWidget(pipe_box)
-
-        # 3. Live Explanation Preview Box
-        expl_box = QFrame()
-        expl_box.setStyleSheet(f"""
-            QFrame {{
-                background: rgba(0, 10, 18, 160);
-                border: 1px solid {C.BORDER}; border-radius: 5px;
-            }}
-        """)
-        x_lay = QVBoxLayout(expl_box)
-        x_lay.setContentsMargins(10, 8, 10, 8)
-        x_lay.setSpacing(4)
-
-        x_hdr = QLabel("▸ معاينة شرح البرنامج باللغة الطبيعية (LIVE EXPLANATION PREVIEW)")
-        x_hdr.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        x_hdr.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
-        x_lay.addWidget(x_hdr)
-
+        # Hidden text preview kept for compatibility / explain dialog
         self._explanation_preview = QTextEdit()
-        self._explanation_preview.setReadOnly(True)
-        self._explanation_preview.setFixedHeight(85)
-        self._explanation_preview.setFont(QFont("Segoe UI", 8))
-        self._explanation_preview.setStyleSheet(f"""
-            QTextEdit {{
-                background: #000810; color: {C.TEXT_MED};
-                border: 1px solid {C.BORDER}; border-radius: 3px;
-                padding: 4px;
-            }}
-        """)
-        x_lay.addWidget(self._explanation_preview)
-        c_lay.addWidget(expl_box)
+        self._explanation_preview.hide()
 
-        scroll.setWidget(container)
-        lay.addWidget(scroll, stretch=1)
-
-        # 4. Pinned Bottom Actions Bar
+        # 3. Pinned Bottom Actions Bar
         bot_bar = QHBoxLayout()
-        bot_bar.setSpacing(8)
+        bot_bar.setSpacing(6)
 
-        save_btn = QPushButton("💾 SAVE FLOW / حفظ البرنامج")
+        test_btn = QPushButton("▶ تجربة الخريطة الآن (TEST RUN)")
+        test_btn.setFixedHeight(28)
+        test_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        test_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        test_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: #002210; color: {C.GREEN};
+                border: 1px solid {C.GREEN}; border-radius: 3px; padding: 0 10px;
+            }}
+            QPushButton:hover {{ background: #004420; color: #ffffff; }}
+        """)
+        test_btn.clicked.connect(self._test_run_current_map)
+        bot_bar.addWidget(test_btn, stretch=2)
+
+        save_btn = QPushButton("💾 حفظ الفلو (SAVE FLOW)")
         save_btn.setFixedHeight(28)
-        save_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        save_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(f"""
             QPushButton {{
@@ -3924,9 +4899,9 @@ class AutomationFlowOverlay(QWidget):
         save_btn.clicked.connect(self._save_flow)
         bot_bar.addWidget(save_btn, stretch=2)
 
-        new_btn = QPushButton("🔄 NEW / مسح وإنشاء جديد")
+        new_btn = QPushButton("🔄 خريطة جديدة")
         new_btn.setFixedHeight(28)
-        new_btn.setFont(QFont("Courier New", 8))
+        new_btn.setFont(QFont("Segoe UI", 8))
         new_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         new_btn.setStyleSheet(f"""
             QPushButton {{
@@ -3938,9 +4913,9 @@ class AutomationFlowOverlay(QWidget):
         new_btn.clicked.connect(self._reset_builder)
         bot_bar.addWidget(new_btn, stretch=1)
 
-        export_now_btn = QPushButton("📤 EXPORT NOW / حفظ وتصدير")
+        export_now_btn = QPushButton("📤 حفظ وتصدير")
         export_now_btn.setFixedHeight(28)
-        export_now_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        export_now_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         export_now_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         export_now_btn.setStyleSheet(f"""
             QPushButton {{
@@ -3957,75 +4932,91 @@ class AutomationFlowOverlay(QWidget):
         lay.addLayout(bot_bar)
         return w
 
-    def _add_node(self, step=None):
-        node = _FlowNodeWidget(step_idx=len(self._nodes) + 1)
-        if step:
-            node.from_step(step)
-        node.changed.connect(self._update_live_explanation)
-        node.move_up_requested.connect(self._move_node_up)
-        node.move_down_requested.connect(self._move_node_down)
-        node.delete_requested.connect(self._remove_node)
-        self._nodes.append(node)
-        self._rebuild_nodes_layout()
+    def _create_new_on_map(self):
+        self._reset_builder()
+        self._switch_tab(1)
 
-    def _remove_node(self, node_widget):
-        if len(self._nodes) <= 1:
-            QMessageBox.information(self, "تنبيه", "يجب أن يحتوي مسار الأوتوميشن على خطوة واحدة على الأقل.")
+    def _sync_repeat_ui(self):
+        if not hasattr(self, "_repeat_btn"):
             return
-        if node_widget in self._nodes:
-            self._nodes.remove(node_widget)
-            node_widget.deleteLater()
-            self._rebuild_nodes_layout()
+        on = self._repeat_btn.isChecked()
+        if on:
+            self._repeat_btn.setText("🔄 تكرار كل (ث):")
+            self._repeat_btn.setStyleSheet(
+                f"QPushButton {{ background: rgba(0, 212, 255, 0.18); color: {C.PRI}; "
+                f"border: 1.5px solid {C.PRI}; border-radius: 4px; padding: 2px 8px; "
+                "font-size: 10px; font-weight: bold; }"
+            )
+            self._interval_edit.setVisible(True)
+            if (self._interval_edit.text().strip() or "0") == "0":
+                self._interval_edit.setText("60")
+        else:
+            self._repeat_btn.setText("⚡ مرة واحدة (بدون تكرار)")
+            self._repeat_btn.setStyleSheet(
+                "QPushButton { background: rgba(0, 255, 136, 0.16); color: #00ff88; "
+                "border: 1.5px solid #00ff88; border-radius: 4px; padding: 2px 8px; "
+                "font-size: 10px; font-weight: bold; }"
+                "QPushButton:hover { background: rgba(0, 255, 136, 0.28); }"
+            )
+            self._interval_edit.setVisible(False)
 
-    def _move_node_up(self, node_widget):
-        if node_widget in self._nodes:
-            idx = self._nodes.index(node_widget)
-            if idx > 0:
-                self._nodes[idx], self._nodes[idx - 1] = self._nodes[idx - 1], self._nodes[idx]
-                self._rebuild_nodes_layout()
+    def _on_repeat_mode_toggled(self, _checked: bool):
+        self._sync_repeat_ui()
+        self._on_trigger_meta_edited()
 
-    def _move_node_down(self, node_widget):
-        if node_widget in self._nodes:
-            idx = self._nodes.index(node_widget)
-            if idx < len(self._nodes) - 1:
-                self._nodes[idx], self._nodes[idx + 1] = self._nodes[idx + 1], self._nodes[idx]
-                self._rebuild_nodes_layout()
+    def _get_interval_seconds(self) -> int:
+        if hasattr(self, "_repeat_btn") and not self._repeat_btn.isChecked():
+            return 0
+        try:
+            val = int(self._interval_edit.text().strip() or "0")
+            return max(0, val)
+        except ValueError:
+            return 0
 
-    def _rebuild_nodes_layout(self):
-        while self._nodes_lay.count():
-            item = self._nodes_lay.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-
-        n_total = len(self._nodes)
-        for i, node in enumerate(self._nodes):
-            node.update_index(i + 1, is_first=(i == 0), is_last=(i == n_total - 1))
-            self._nodes_lay.addWidget(node)
-            if i < n_total - 1:
-                arrow = QLabel("▼")
-                arrow.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-                arrow.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; border: none;")
-                arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._nodes_lay.addWidget(arrow)
-
+    def _on_trigger_meta_edited(self):
+        if hasattr(self, "_canvas"):
+            self._canvas.refresh_trigger_card()
         self._update_live_explanation()
 
+    def _on_node_state_ui(self, flow_id: str, node_id: str, state: str):
+        if hasattr(self, "_canvas"):
+            if self._current_flow_id is None or flow_id in (self._current_flow_id, "__test__"):
+                self._canvas.set_node_exec_state(node_id, state)
+
+    def _test_run_current_map(self):
+        from core.flow_engine import FlowEngine, AutomationFlow
+        graph, steps = self._canvas.to_graph_and_steps()
+        if not steps:
+            QMessageBox.warning(self, "تنبيه", "أضف خطوة واحدة على الأقل على الخريطة قبل التجربة.")
+            return
+        temp_flow = AutomationFlow(
+            id=self._current_flow_id or "__test__",
+            name=self._name_edit.text().strip() or "تجربة الخريطة",
+            description=self._desc_edit.text().strip(),
+            start_command=self._start_cmd_edit.text().strip(),
+            stop_command=self._stop_cmd_edit.text().strip(),
+            interval_seconds=60,
+            steps=steps,
+            graph=graph,
+        )
+        FlowEngine.get_instance().run_once(temp_flow, player=self._player)
+
     def _update_live_explanation(self):
+        if not hasattr(self, "_canvas"):
+            return
         name = self._name_edit.text().strip() or "برنامج الأوتوميشن"
         start_cmd = self._start_cmd_edit.text().strip() or "(لم يحدد)"
-        stop_cmd = self._stop_cmd_edit.text().strip() or "(لم يحدد)"
-        try:
-            interval = int(self._interval_edit.text().strip() or "60")
-        except ValueError:
-            interval = 60
+        stop_cmd = self._stop_cmd_edit.text().strip()
+        interval = self._get_interval_seconds()
 
-        steps_dicts = [node.to_step().to_dict() for node in self._nodes]
+        graph, steps = self._canvas.to_graph_and_steps()
         flow_data = {
             "name": name,
             "start_command": start_cmd,
             "stop_command": stop_cmd,
             "interval_seconds": interval,
-            "steps": steps_dicts,
+            "steps": [st.to_dict() for st in steps],
+            "graph": graph,
         }
         try:
             from core.flow_engine import FlowEngine
@@ -4040,18 +5031,15 @@ class AutomationFlowOverlay(QWidget):
         self._desc_edit.setText(flow.description)
         self._start_cmd_edit.setText(flow.start_command)
         self._stop_cmd_edit.setText(flow.stop_command)
-        self._interval_edit.setText(str(flow.interval_seconds))
-
-        for n in self._nodes:
-            n.deleteLater()
-        self._nodes.clear()
-
-        for s in flow.steps:
-            self._add_node(step=s)
-
-        if not self._nodes:
-            self._add_node()
-
+        secs = int(flow.interval_seconds or 0)
+        if secs > 0:
+            self._interval_edit.setText(str(secs))
+            self._repeat_btn.setChecked(True)
+        else:
+            self._interval_edit.setText("0")
+            self._repeat_btn.setChecked(False)
+        self._sync_repeat_ui()
+        self._canvas.load_from_flow(flow)
         self._switch_tab(1)
 
     def _reset_builder(self):
@@ -4061,11 +5049,11 @@ class AutomationFlowOverlay(QWidget):
         self._start_cmd_edit.clear()
         self._stop_cmd_edit.clear()
         self._interval_edit.setText("60")
-
-        for n in self._nodes:
-            n.deleteLater()
-        self._nodes.clear()
-        self._add_node()
+        if hasattr(self, "_repeat_btn"):
+            self._repeat_btn.setChecked(False)
+            self._sync_repeat_ui()
+        if hasattr(self, "_canvas"):
+            self._canvas.clear_graph(with_default=True)
         self._update_live_explanation()
 
     def _save_flow(self) -> bool:
@@ -4073,10 +5061,9 @@ class AutomationFlowOverlay(QWidget):
         desc = self._desc_edit.text().strip()
         start_cmd = self._start_cmd_edit.text().strip()
         stop_cmd = self._stop_cmd_edit.text().strip()
-        try:
-            interval = int(self._interval_edit.text().strip() or "60")
-        except ValueError:
-            interval = 60
+        interval = self._get_interval_seconds()
+
+        graph, steps = self._canvas.to_graph_and_steps()
 
         if not name:
             QMessageBox.warning(self, "تنبيه", "يرجى إدخال اسم البرنامج (Flow Name).")
@@ -4084,11 +5071,11 @@ class AutomationFlowOverlay(QWidget):
         if not start_cmd:
             QMessageBox.warning(self, "تنبيه", "يرجى كتابة أمر البدء من الشات (Start Command).")
             return False
-        if not stop_cmd:
-            QMessageBox.warning(self, "تنبيه", "يرجى كتابة أمر الإيقاف من الشات (Stop Command).")
+        if interval > 0 and not stop_cmd:
+            QMessageBox.warning(self, "تنبيه", "يرجى كتابة أمر الإيقاف من الشات لأن التكرار مفعّل (أو حوّل الزرار لـ «⚡ مرة واحدة»).")
             return False
-        if not self._nodes:
-            QMessageBox.warning(self, "تنبيه", "يجب إضافة خطوة واحدة على الأقل في مسار التنفيذ.")
+        if not steps:
+            QMessageBox.warning(self, "تنبيه", "يجب إضافة خطوة واحدة على الأقل في الخريطة.")
             return False
 
         from core.flow_engine import FlowEngine, AutomationFlow
@@ -4108,7 +5095,6 @@ class AutomationFlowOverlay(QWidget):
             created_at = time.time()
             status = "IDLE"
 
-        steps = [n.to_step() for n in self._nodes]
         flow = AutomationFlow(
             id=fid,
             name=name,
@@ -4117,6 +5103,7 @@ class AutomationFlowOverlay(QWidget):
             stop_command=stop_cmd,
             interval_seconds=interval,
             steps=steps,
+            graph=graph,
             run_count=run_count,
             created_at=created_at,
             status=status,
@@ -4127,11 +5114,11 @@ class AutomationFlowOverlay(QWidget):
         if ok:
             QMessageBox.information(
                 self, "تم الحفظ بنجاح",
-                f"✅ تم حفظ برنامج الأوتوميشن [{flow.name}] بنجاح!\n\n"
+                f"✅ تم حفظ خريطة الفلو [{flow.name}] بنجاح!\n\n"
                 f"• أمر البدء: `{flow.start_command}`\n"
                 f"• أمر الإيقاف: `{flow.stop_command}`\n"
-                f"• الفاصل الزمني: كل {flow.interval_seconds} ثانية\n\n"
-                f"يمكنك تشغيل البرنامج الآن من الشات بكتابة أمر البدء أو بالضغط على زر START في قائمة البرامج!"
+                f"• عدد النودز على الخريطة: {len(graph.get('nodes', []))}\n\n"
+                f"يمكنك تشغيله الآن من الشات أو التليجرام أو من زر START في قائمة البرامج!"
             )
             self._refresh_library()
             self._switch_tab(0)
@@ -7747,8 +8734,9 @@ class MainWindow(QMainWindow):
             self._flow_overlay.raise_()
             return
         self._flow_overlay = AutomationFlowOverlay(parent=cw, player=self)
-        ow, oh = AutomationFlowOverlay._OW, AutomationFlowOverlay._OH
-        oh = min(oh, cw.height() - 20)
+        ow = min(AutomationFlowOverlay._OW, cw.width() - 20)
+        oh = min(AutomationFlowOverlay._OH, cw.height() - 20)
+        self._flow_overlay.setFixedSize(ow, oh)
         self._flow_overlay.setGeometry(
             (cw.width() - ow) // 2,
             (cw.height() - oh) // 2,

@@ -189,31 +189,37 @@ def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,
                     sys.modules.pop(module_name, None)
                     raise
 
-            if getattr(module, "TOOL", None) is None:
+            single_tool = getattr(module, "TOOL", None)
+            multi_tools = getattr(module, "TOOLS", None)
+            if single_tool is None and not isinstance(multi_tools, list):
                 continue   # not an action file — a helper/capture-only module
 
-            rec = _validate(module, path.name)
-
-            if rec.valid and rec.name in reserved:
-                rec = ActionRecord(name=rec.name, file=path.name,
-                                   error=f"Name '{rec.name}' collides with a reserved core tool — rejected.")
-            elif rec.valid and rec.name in valid:
-                other = valid[rec.name].file
-                rec = ActionRecord(name=rec.name, file=path.name,
-                                   error=f"Name '{rec.name}' already used by action '{other}' — rejected.")
+            tool_dicts = [single_tool] if isinstance(single_tool, dict) else list(multi_tools or [])
+            file_records: list[ActionRecord] = []
+            for td in tool_dicts:
+                fake_mod = type("_ToolMod", (), {"TOOL": td})
+                rec = _validate(fake_mod, path.name)
+                if rec.valid and rec.name in reserved:
+                    rec = ActionRecord(name=rec.name, file=path.name,
+                                       error=f"Name '{rec.name}' collides with a reserved core tool — rejected.")
+                elif rec.valid and rec.name in valid:
+                    other = valid[rec.name].file
+                    rec = ActionRecord(name=rec.name, file=path.name,
+                                       error=f"Name '{rec.name}' already used by action '{other}' — rejected.")
+                file_records.append(rec)
 
         except Exception as e:
-            rec = ActionRecord(name=path.stem, file=path.name,
-                               error=f"Failed to load: {e}")
+            file_records = [ActionRecord(name=path.stem, file=path.name,
+                                         error=f"Failed to load: {e}")]
             traceback.print_exc()
 
-        all_records.append(rec)
-        if rec.valid:
-            valid[rec.name] = rec
-            logger(f"Action loaded: {rec.name} ({path.name})")
-        else:
-            # Only log a rejection if the file actually tried to be an action.
-            logger(f"Action rejected: {path.name} — {rec.error}")
+        for rec in file_records:
+            all_records.append(rec)
+            if rec.valid:
+                valid[rec.name] = rec
+                logger(f"Action loaded: {rec.name} ({path.name})")
+            else:
+                logger(f"Action rejected: {path.name} — {rec.error}")
 
     registry = ActionRegistry(valid, logger)
     registry._all_records = all_records

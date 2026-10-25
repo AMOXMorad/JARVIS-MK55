@@ -158,7 +158,21 @@ def _desktop_send(app_name: str, receiver: str, message: str) -> str:
 def _send_whatsapp(receiver: str, message: str) -> str:
     return _desktop_send("WhatsApp", receiver, message)
 
+_SELF_RECEIVERS = {
+    "bot", "the bot", "my bot", "jarvis bot", "telegram bot", "me", "myself", "owner",
+    "البوت", "بوت", "بوت التليجرام", "بوت تليجرام", "بوت التلجرام", "البوت بتاعي",
+    "انا", "أنا", "ليا", "لي", "نفسي", "جارفيس", "jarvis",
+}
+
 def _send_telegram(receiver: str, message: str) -> str:
+    # "Send it to the bot / to me" means the owner's chat with JARVIS's own bot —
+    # use the Bot API, which needs no desktop app at all.
+    if (receiver or "").strip().lower() in _SELF_RECEIVERS and message:
+        try:
+            from plugins.telegram_bridge import send_to_owner
+            return send_to_owner(message)
+        except Exception as e:
+            print(f"[SendMessage] telegram bot send failed: {e}")
     try:
         from plugins.telegram_control import visual_chat, search_and_open, run as run_telegram
         if receiver and message:

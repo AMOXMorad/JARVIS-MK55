@@ -416,12 +416,10 @@ TOOL_DECLARATIONS = [
     {
         "name": "save_memory",
         "description": (
-            "Save an important personal fact about the user to long-term memory. "
-            "Call this silently whenever the user reveals something worth remembering: "
-            "name, age, city, job, preferences, hobbies, relationships, projects, or future plans. "
-            "Do NOT call for: weather, reminders, searches, or one-time commands. "
-            "Do NOT announce that you are saving — just call it silently. "
-            "Values must be in English regardless of the conversation language."
+            "Save an important personal fact, preference, default setting, or standing behavioral rule "
+            "about the user to long-term memory. Call this whenever the user tells you a preference, "
+            "rule, habit, account/profile name, or personal detail to remember. "
+            "Values may be in Arabic or English — preserve exact names, profile names, and Arabic phrases."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -429,16 +427,17 @@ TOOL_DECLARATIONS = [
                 "category": {
                     "type": "STRING",
                     "description": (
+                        "rules — standing behavioral instructions, custom defaults, how the user wants tasks done | "
                         "identity — name, age, birthday, city, job, language, nationality | "
-                        "preferences — favorite food/color/music/film/game/sport, hobbies | "
+                        "preferences — favorite apps/profiles/games/settings, personal tastes | "
                         "projects — active projects, goals, things being built | "
                         "relationships — friends, family, partner, colleagues | "
                         "wishes — future plans, things to buy, travel dreams | "
                         "notes — habits, schedule, anything else worth remembering"
                     )
                 },
-                "key":   {"type": "STRING", "description": "Short snake_case key (e.g. name, favorite_food, sister_name)"},
-                "value": {"type": "STRING", "description": "Concise value in English (e.g. Fatih, pizza, older sister)"},
+                "key":   {"type": "STRING", "description": "Short snake_case key (e.g. default_profile, reply_style, favorite_game)"},
+                "value": {"type": "STRING", "description": "Value in Arabic or English preserving exact user terms"},
             },
             "required": ["category", "key", "value"]
         }
@@ -889,6 +888,15 @@ class JarvisLive:
         manual = self._dashboard.get_manual_url()
         return url, key, f"{url}/auto-login?key={key}", manual
 
+    def _tg_mirror(self, text: str) -> None:
+        """Hand a result to the Telegram bridge (sent only during a remote chat)."""
+        try:
+            import plugins.telegram_bridge as _tb
+            if _tb._bridge_running and text:
+                _tb._response_queue.put_nowait(text)
+        except Exception:
+            pass
+
     def _on_text_command(self, text: str):
         if not self._loop:
             return
@@ -964,6 +972,7 @@ class JarvisLive:
             shortcut_res = check_chat_shortcut(text, player=self.ui)
             if shortcut_res:
                 self.ui.write_log(f"[shortcut] {shortcut_res}")
+                self._tg_mirror(str(shortcut_res))
                 self._last_user_speech = time.monotonic()
                 return
         except Exception as e:
@@ -979,6 +988,7 @@ class JarvisLive:
                         from actions.close_app import close_app
                         res = close_app({"app_name": app_target}, player=self.ui)
                         self.ui.write_log(f"[close_app] {res}")
+                        self._tg_mirror(str(res))
                         self._last_user_speech = time.monotonic()
                         return
                     except Exception as e:
@@ -994,15 +1004,29 @@ class JarvisLive:
                 if cmd_type == "start":
                     res = engine.start_flow(flow_id, player=self.ui)
                     self.ui.write_log(f"[flow] {res}")
+                    self._tg_mirror(str(res))
                     self._last_user_speech = time.monotonic()
                     return
                 elif cmd_type == "stop":
                     res = engine.stop_flow(flow_id, player=self.ui)
                     self.ui.write_log(f"[flow] {res}")
+                    self._tg_mirror(str(res))
                     self._last_user_speech = time.monotonic()
                     return
         except Exception as e:
             print(f"[FlowEngine] chat command check error: {e}")
+
+        # 4. Check if typed text triggers a learned user skill directly
+        try:
+            from skills.skill_manager import check_chat_skill
+            skill_res = check_chat_skill(text, player=self.ui)
+            if skill_res:
+                self.ui.write_log(f"[skill] {skill_res}")
+                self._tg_mirror(str(skill_res))
+                self._last_user_speech = time.monotonic()
+                return
+        except Exception as e:
+            print(f"[SkillManager] chat skill check error: {e}")
 
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
@@ -1117,14 +1141,42 @@ class JarvisLive:
                     self.ui.set_state("THINKING")
                 except Exception:
                     pass
-                if self.out_queue is not None:
-                    # Trailing silence (500ms at 16kHz int16 = 16000 bytes)
-                    # This allows the server's Voice Activity Detection to recognize end-of-speech immediately.
-                    silence_chunk = b"\x00" * 16000
-                    try:
-                        self.out_queue.put_nowait({"data": silence_chunk, "mime_type": "audio/pcm;rate=16000"})
-                    except Exception:
-                        pass
+                self._end_ptt_turn()
+
+    def _end_ptt_turn(self) -> None:
+        """Tell the server the user's turn is over the moment the chord is released.
+
+        Once the chord is up the mic callback stops streaming, so the server's
+        VAD never hears the trailing pause it waits for (`silence_ms`, 550 ms by
+        default) and the turn would hang until the chord is pressed again. Send
+        enough real silence to cover that window, then `audio_stream_end`, which
+        makes the server flush the cached audio and answer right away.
+        """
+        q, loop = self.out_queue, self._loop
+        if q is None or loop is None:
+            return
+        try:
+            silence_ms = int(get_turn_tuning().get("silence_ms", 550))
+        except Exception:
+            silence_ms = 550
+        total_ms = silence_ms + 250
+        chunk_ms = 100
+        chunk = b"\x00" * (SEND_SAMPLE_RATE * 2 * chunk_ms // 1000)   # int16 mono
+        items = [{"data": chunk, "mime_type": "audio/pcm;rate=16000"}
+                 for _ in range(max(1, -(-total_ms // chunk_ms)))]
+        items.append({"audio_stream_end": True})
+
+        def _push():
+            for it in items:
+                try:
+                    q.put_nowait(it)
+                except Exception:
+                    pass
+        try:
+            # May be called from the hotkey thread; asyncio.Queue is not thread-safe.
+            loop.call_soon_threadsafe(_push)
+        except Exception:
+            pass
 
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
@@ -1242,6 +1294,13 @@ class JarvisLive:
         parts = [time_ctx, identity_ctx]
         if mem_str:
             parts.append(mem_str)
+        try:
+            from skills.skill_manager import format_learned_for_prompt
+            learned_str = format_learned_for_prompt()
+            if learned_str:
+                parts.append(learned_str)
+        except Exception:
+            pass
         parts.append(sys_prompt)
 
         cfg = dict(
@@ -1357,6 +1416,10 @@ class JarvisLive:
             if key and value:
                 update_memory({category: {key: {"value": value}}})
                 print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+                try:
+                    self.ui.write_log(f"[memory] 🧠 تم حفظ: {key} = {value}")
+                except Exception:
+                    pass
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
@@ -1526,6 +1589,13 @@ class JarvisLive:
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
+            if msg.get("audio_stream_end"):
+                # Push-to-talk released: the mic is closed, end the user's turn now.
+                try:
+                    await self.session.send_realtime_input(audio_stream_end=True)
+                except Exception as e:
+                    print(f"[JARVIS] \u26a0 audio_stream_end failed: {e}")
+                continue
             # Gemini 3.x Live rejects the old realtime_input.media_chunks field
             # (what `media=...` maps to) and closes the socket with a 1007. Send
             # mic / phone PCM through the new `audio` field instead. Queue items

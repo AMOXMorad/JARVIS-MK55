@@ -1,0 +1,103 @@
+{
+  "id": "shift_facebook_1792948025",
+  "name": "Shift Facebook",
+  "description": "فتح شفت الفيس بوك",
+  "start_command": "Shift Facebook , شفت فيس بوك",
+  "stop_command": "وقف شفت فيس بوك , stop shift",
+  "interval_seconds": 0,
+  "steps": [
+    {
+      "action": "browser_control",
+      "parameters": {
+        "action": "open_with_profile",
+        "profile_name": "mohamed worl",
+        "bookmark": "",
+        "url": "",
+        "skip_if_open": true
+      },
+      "label": "",
+      "condition": "skip_if_open",
+      "on_failure": "continue"
+    },
+    {
+      "action": "browser_control",
+      "parameters": {
+        "action": "open_with_profile",
+        "profile_name": "",
+        "bookmark": "",
+        "url": "https://business.facebook.com/latest/inbox/all/?business_id=771177563501549&asset_id=838749876515542&mailbox_id=838749876515542&selected_item_id=100004272632509&thread_type=FB_MESSAGE",
+        "skip_if_open": true
+      },
+      "label": "",
+      "condition": "skip_if_open",
+      "on_failure": "continue"
+    }
+  ],
+  "explanation": "📋 **شرح برنامج: Shift Facebook**\n• **أمر التشغيل**: `Shift Facebook , شفت فيس بوك`\n• **أمر الإيقاف**: `وقف شفت فيس بوك , stop shift`\n• **نظام التشغيل**: ⚡ يعمل مرة واحدة فقط عند الطلب (بدون تكرار).\n\n**خطوات التنفيذ (Nodes)**:\n1. 🌐 **تحكم المتصفح**: المتصفح [open_with_profile] بحساب: mohamed worl (مع تخطي الفتح إذا كان مفتوحاً بالفعل)\n2. 🌐 **تحكم المتصفح**: المتصفح [open_with_profile] - رابط: https://business.facebook.com/latest/inbox/all/?business_id=771177563501549&asset_id=838749876515542&mailbox_id=838749876515542&selected_item_id=100004272632509&thread_type=FB_MESSAGE (مع تخطي الفتح إذا كان مفتوحاً بالفعل)\n\n🗺 **خريطة**: 3 نود، 2 توصيلة.",
+  "enabled": true,
+  "created_at": 1792948025.3100872,
+  "last_run": 1792948464.2060864,
+  "run_count": 1,
+  "status": "IDLE",
+  "graph": {
+    "nodes": [
+      {
+        "id": "trigger",
+        "type": "trigger",
+        "x": 29.0,
+        "y": 90.0,
+        "step": {}
+      },
+      {
+        "id": "node_1",
+        "type": "action",
+        "x": 290.0,
+        "y": 90.0,
+        "step": {
+          "action": "browser_control",
+          "parameters": {
+            "action": "open_with_profile",
+            "profile_name": "mohamed worl",
+            "bookmark": "",
+            "url": "",
+            "skip_if_open": true
+          },
+          "label": "",
+          "condition": "skip_if_open",
+          "on_failure": "continue"
+        }
+      },
+      {
+        "id": "node_2",
+        "type": "action",
+        "x": 535.0,
+        "y": 90.0,
+        "step": {
+          "action": "browser_control",
+          "parameters": {
+            "action": "open_with_profile",
+            "profile_name": "",
+            "bookmark": "",
+            "url": "https://business.facebook.com/latest/inbox/all/?business_id=771177563501549&asset_id=838749876515542&mailbox_id=838749876515542&selected_item_id=100004272632509&thread_type=FB_MESSAGE",
+            "skip_if_open": true
+          },
+          "label": "",
+          "condition": "skip_if_open",
+          "on_failure": "continue"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "trigger",
+        "to": "node_1",
+        "branch": "main"
+      },
+      {
+        "from": "node_1",
+        "to": "node_2",
+        "branch": "main"
+      }
+    ]
+  }
+}

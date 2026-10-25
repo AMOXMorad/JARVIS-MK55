@@ -24,9 +24,10 @@ from skills.skill_base import SkillDefinition, SkillStep
 _ALLOWED_SKILL_ACTIONS = {
     "open_app", "close_app", "browser_control", "computer_control",
     "computer_settings", "send_message", "file_processor", "file_controller",
-    "screen_grounding", "vision_interact", "discord_control", "shopify_work",
+    "screen_grounding", "vision_interact", "discord_control",
     "goal_agent", "flow_control", "web_search", "system_status",
-    "reminder", "youtube_video", "weather_report",
+    "reminder", "youtube_video", "weather_report", "telegram_bridge",
+    "quick_shortcuts", "cmd_control", "obsidian", "wait",
 }
 
 
@@ -69,12 +70,18 @@ def _default_dispatcher(action_name: str, params: dict) -> str:
         elif action_name == "send_message":
             from actions.send_message import send_message
             return send_message(parameters=params)
-        elif action_name == "shopify_work":
-            try:
-                import plugins.shopify_work as sw
-                return sw.run(parameters=params)
-            except Exception:
-                pass
+        elif action_name == "wait":
+            time.sleep(float(params.get("seconds", 1)))
+            return f"Waited {params.get('seconds', 1)}s"
+        elif action_name == "close_app":
+            from actions.close_app import close_app
+            return close_app(parameters=params)
+        elif action_name == "telegram_bridge":
+            import plugins.telegram_bridge as tb
+            return tb.run(parameters=params)
+        elif action_name == "quick_shortcuts":
+            import plugins.quick_shortcuts as qs
+            return qs.run(parameters=params)
         elif action_name == "flow_control":
             from actions.flow_action import flow_control
             return flow_control(parameters=params)
@@ -124,9 +131,13 @@ class SkillManager:
                 )
             except Exception:
                 return None
-        # Fuzzy search
+        # Fuzzy search by name, display_name, or trigger tags
+        q = (name or "").strip().lower()
         for skill in self.list_skills():
-            if skill.name.lower() == name.lower() or skill.display_name == name:
+            if (skill.name.lower() == q
+                    or skill.display_name.strip().lower() == q
+                    or q in [t.strip().lower() for t in (skill.tags or [])]
+                    or (len(q) >= 3 and (q in skill.display_name.lower() or q in skill.name.lower()))):
                 return skill
         return None
 
@@ -361,3 +372,91 @@ def _generate_readme(skill: SkillDefinition) -> str:
 
 {('```\npip install ' + ' '.join(skill.required_packages) + '\n```') if skill.required_packages else 'None'}
 """
+
+
+def _norm_ar(text: str) -> str:
+    if not text:
+        return ""
+    t = text.strip().lower()
+    for a, b in (("أ", "ا"), ("إ", "ا"), ("آ", "ا"), ("ة", "ه"), ("ى", "ي")):
+        t = t.replace(a, b)
+    for p in ".,!?;:\"'()[]{}«»-_\n\r\t":
+        t = t.replace(p, " ")
+    return " ".join(t.split())
+
+
+def check_chat_skill(user_text: str, player=None) -> str | None:
+    """Check if user_text triggers a saved skill directly from chat/Telegram."""
+    if not user_text:
+        return None
+    norm = _norm_ar(user_text)
+    if not norm:
+        return None
+
+    sm = SkillManager()
+    skills = sm.list_skills()
+    if not skills:
+        return None
+
+    # Explicit prefix: "نفذ مهارة X" / "شغل مهارة X" / "run skill X"
+    for prefix in ("نفذ مهاره ", "شغل مهاره ", "تشغيل مهاره ", "run skill ", "execute skill "):
+        if norm.startswith(prefix):
+            target = norm[len(prefix):].strip()
+            for s in skills:
+                if target and (target in _norm_ar(s.display_name) or target in _norm_ar(s.name)):
+                    if player and hasattr(player, "write_log"):
+                        player.write_log(f"[skill] ⚡ جاري تنفيذ مهارة: {s.display_name}")
+                    return sm.execute_skill(s.name)
+
+    # Direct match on display_name or trigger tags
+    for s in skills:
+        triggers = [s.display_name, s.name.replace("_", " ")] + list(s.tags or [])
+        for trig in triggers:
+            nt = _norm_ar(trig)
+            if nt and len(nt) >= 3 and (norm == nt or norm in (f"شغل {nt}", f"نفذ {nt}", f"افتح {nt}")):
+                if player and hasattr(player, "write_log"):
+                    player.write_log(f"[skill] ⚡ جاري تنفيذ مهارة: {s.display_name}")
+                return sm.execute_skill(s.name)
+    return None
+
+
+def format_learned_for_prompt() -> str:
+    """Build a compact prompt block of all learned skills, flows, and shortcuts."""
+    lines: list[str] = []
+    try:
+        sm = SkillManager()
+        skills = sm.list_skills()
+        if skills:
+            lines.append("Learned Skills (call `run_skill` with `name` when requested):")
+            for s in skills[:20]:
+                trig = f" | triggers: {', '.join(s.tags)}" if s.tags else ""
+                lines.append(f"  - {s.name} ({s.display_name}): {s.description[:120]}{trig}")
+    except Exception:
+        pass
+
+    try:
+        from core.flow_engine import FlowEngine
+        flows = FlowEngine.get_instance().list_flows()
+        if flows:
+            lines.append("Registered Automation Flows (call `flow_control` or triggered by start_command):")
+            for f in flows[:15]:
+                mode = f"every {f.interval_seconds}s" if f.interval_seconds > 0 else "one-shot"
+                lines.append(f"  - {f.id} ({f.name}) [{mode}] — start: '{f.start_command}'")
+    except Exception:
+        pass
+
+    try:
+        from plugins.quick_shortcuts import load_shortcuts
+        shortcuts = load_shortcuts()
+        if shortcuts:
+            lines.append("Quick Shortcuts (call `quick_shortcuts` with action='open', keyword=...):")
+            for k, v in list(shortcuts.items())[:20]:
+                kw = v.get("keyword", k)
+                desc = v.get("description") or v.get("target", "")
+                lines.append(f"  - '{kw}': {str(desc)[:100]}")
+    except Exception:
+        pass
+
+    if not lines:
+        return ""
+    return "[LEARNED SKILLS, FLOWS & SHORTCUTS — use these automatically when relevant]\n" + "\n".join(lines) + "\n"

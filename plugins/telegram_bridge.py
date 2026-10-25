@@ -37,19 +37,29 @@ except ImportError:
 PLUGIN = {
     "name": "telegram_bridge",
     "description": (
-        "Controls the background Telegram remote bot bridge between your phone and JARVIS. "
-        "Allows the user to control JARVIS from their phone via a Telegram bot. "
-        "ACTIONS: 'start' (start phone bridge polling) | 'stop' (stop phone bridge polling) | 'status'. "
-        "IMPORTANT: NEVER call this tool when the user asks to open or close the Telegram desktop app on the PC! "
-        "To close desktop Telegram, call close_app(app_name='Telegram'). Only use this when explicitly asked about the Telegram remote bridge/bot."
+        "Controls the background Telegram remote bot bridge between the user's phone and JARVIS, "
+        "and sends messages TO THE USER through JARVIS's own Telegram bot (Bot API — no desktop app needed). "
+        "ACTIONS: 'send' (send `message` to the user on Telegram via the bot) | "
+        "'send_status' (send a system status report to the user on Telegram) | "
+        "'start' (start phone bridge polling) | 'stop' (stop phone bridge polling) | 'status' (is the bridge running). "
+        "Use 'send' / 'send_status' whenever the user says things like: send it to me on Telegram, "
+        "ابعتلي على التليجرام, ابعت للبوت, ابعت رسالة لبوت التليجرام, ابعتلي تقرير الحالة. "
+        "Messages the user sends to the bot (text or voice) arrive here as normal user turns, and your spoken "
+        "replies are mirrored back to the Telegram chat automatically — you don't need to call 'send' to answer them. "
+        "IMPORTANT: NEVER call this tool to open/close/operate the Telegram DESKTOP app or to message OTHER people — "
+        "use telegram_control / send_message / close_app for that."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "enum": ["start", "stop", "status"],
-                "description": "Start/stop the Telegram remote bot bridge, or check its status."
+                "enum": ["send", "send_status", "start", "stop", "status"],
+                "description": "send | send_status | start | stop | status"
+            },
+            "message": {
+                "type": "STRING",
+                "description": "Text to send to the user on Telegram (required for action='send')."
             }
         },
         "required": ["action"]
@@ -82,6 +92,15 @@ class _BridgeState:
         self.player_ref = None
         self.response_queue: queue.Queue = queue.Queue()
         self.auto_start_done: bool = False
+        # Remote-chat session: the chat that last talked to JARVIS and when.
+        # While it is recent, every JARVIS reply is mirrored to that chat.
+        self.token: str = ""
+        self.allowed_ids: set = set()
+        self.active_chat_id = None
+        self.last_remote_at: float = 0.0
+        self.forwarder_thread: threading.Thread | None = None
+        self.worker_thread: threading.Thread | None = None
+        self.inbox: queue.Queue = queue.Queue()
 
 if not hasattr(sys, "_jarvis_telegram_state"):
     sys._jarvis_telegram_state = _BridgeState()
@@ -395,12 +414,12 @@ def _handle_message(token: str, chat_id: int | str, text: str):
         print(f"[TelegramBridge] Flow command check error: {e}")
 
     # ── General Text Command Forwarding ───────────────────────────────────────
-    # Drain any stale responses in the queue first
-    try:
-        while True:
-            _state.response_queue.get_nowait()
-    except queue.Empty:
-        pass
+    # Replies are no longer awaited here: the forwarder thread mirrors every
+    # JARVIS reply to this chat while the remote session is active, so long
+    # tool runs and multi-turn answers all reach Telegram instead of being
+    # cut off after a fixed timeout.
+    _mark_remote(chat_id)
+    _send_chat_action(token, chat_id, "typing")
 
     executed = False
 
@@ -437,34 +456,129 @@ def _handle_message(token: str, chat_id: int | str, text: str):
         _send_message(token, chat_id, "⚠️ جار الاتصال بـ JARVIS... يرجى إعادة إرسال الأمر بعد ثوانٍ.")
         return
 
-    # Wait dynamically for JARVIS's answer from Gemini (up to 12s timeout)
-    deadline = time.monotonic() + 12.0
-    responses: list[str] = []
 
-    while time.monotonic() < deadline:
+# ── Remote chat session / reply mirroring ─────────────────────────────────────
+
+def _remote_window_s() -> float:
+    try:
+        return max(30.0, float(_load_config().get("mirror_window_min", 15)) * 60.0)
+    except Exception:
+        return 900.0
+
+
+def _mark_remote(chat_id):
+    _state.active_chat_id = chat_id
+    _state.last_remote_at = time.monotonic()
+
+
+def remote_active() -> bool:
+    """True while the user is chatting with JARVIS from Telegram."""
+    if _state.active_chat_id is None:
+        return False
+    if _load_config().get("mirror_all", False):
+        return True
+    return (time.monotonic() - _state.last_remote_at) < _remote_window_s()
+
+
+def _send_chat_action(token: str, chat_id, action: str = "typing"):
+    if not _REQUESTS_OK:
+        return
+    try:
+        requests.post(f"https://api.telegram.org/bot{token}/sendChatAction",
+                      json={"chat_id": chat_id, "action": action}, timeout=5)
+    except Exception:
+        pass
+
+
+def _owner_chat_id():
+    if _state.active_chat_id is not None:
+        return _state.active_chat_id
+    ids = list(_state.allowed_ids or _load_config().get("allowed_user_ids", []))
+    return ids[0] if ids else None
+
+
+def send_to_owner(text: str) -> str:
+    """Send a message to the owner via the bot (works even if the bridge is stopped)."""
+    text = (text or "").strip()
+    if not text:
+        return "⚠️ No message text given."
+    token = _state.token or _resolve_token(_load_config())
+    chat_id = _owner_chat_id()
+    if not token:
+        return "⚠️ Telegram bot token is missing — set it in Settings → TELEGRAM."
+    if chat_id is None:
+        return "⚠️ No Telegram user ID configured (allowed_user_ids in config/telegram.json)."
+    # Telegram caps a message at 4096 chars.
+    for i in range(0, len(text), 4000):
+        _send_message(token, chat_id, text[i:i + 4000])
+    return "✅ Sent to the user on Telegram."
+
+
+def _forwarder_loop():
+    """Mirror JARVIS replies to the active Telegram chat while a remote session is on."""
+    while _state.bridge_running:
         try:
-            r = _state.response_queue.get(timeout=0.4)
-            if r and r.strip():
-                responses.append(r.strip())
-                # Collect any follow-up sentences within a 1.2s window
-                grace_deadline = time.monotonic() + 1.2
-                while time.monotonic() < grace_deadline:
-                    try:
-                        r_extra = _state.response_queue.get(timeout=0.3)
-                        if r_extra and r_extra.strip():
-                            responses.append(r_extra.strip())
-                            grace_deadline = time.monotonic() + 1.0
-                    except queue.Empty:
-                        pass
-                break
+            r = _state.response_queue.get(timeout=0.5)
         except queue.Empty:
-            pass
+            continue
+        parts = [r.strip()] if r and r.strip() else []
+        # Gather follow-up sentences that belong to the same answer.
+        grace = time.monotonic() + 1.2
+        while time.monotonic() < grace:
+            try:
+                extra = _state.response_queue.get(timeout=0.3)
+                if extra and extra.strip():
+                    parts.append(extra.strip())
+                    grace = time.monotonic() + 1.0
+            except queue.Empty:
+                pass
+        if not parts or not remote_active():
+            continue
+        token, chat_id = _state.token, _state.active_chat_id
+        if token and chat_id is not None:
+            send_text = "🤖 JARVIS:\n" + "\n".join(parts)
+            for i in range(0, len(send_text), 4000):
+                _send_message(token, chat_id, send_text[i:i + 4000])
 
-    if responses:
-        full_reply = "\n".join(responses)
-        _send_message(token, chat_id, f"🤖 JARVIS:\n{full_reply}")
-    else:
-        _send_message(token, chat_id, "✅ تم استلام الأمر وإرساله لـ JARVIS وجاري تنفيذه.")
+
+def _process_update(token: str, chat_id, msg: dict):
+    """Handle one incoming message (text or voice) — runs on the worker thread."""
+    text = (msg.get("text") or msg.get("caption") or "").strip()
+
+    # Support Voice Notes & Audio Records
+    voice = msg.get("voice") or msg.get("audio") or msg.get("video_note")
+    if not text and voice:
+        file_id = voice.get("file_id")
+        mime = voice.get("mime_type", "audio/ogg" if not msg.get("video_note") else "video/mp4")
+        _mark_remote(chat_id)
+        _send_chat_action(token, chat_id, "typing")
+        transcribed = _transcribe_audio(token, file_id, mime)
+        if transcribed:
+            _send_message(token, chat_id, f"🎙️ «{transcribed}»")
+            text = transcribed
+        else:
+            _send_message(token, chat_id, "⚠️ تعذر فهم الرسالة الصوتية أو تفريغها، حاول مجدداً أو اكتب الأمر.")
+            return
+
+    if text:
+        _handle_message(token, chat_id, text)
+
+
+def _worker_loop():
+    """Process incoming messages in order without blocking Telegram polling."""
+    while _state.bridge_running:
+        try:
+            token, chat_id, msg = _state.inbox.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        try:
+            _process_update(token, chat_id, msg)
+        except Exception as e:
+            print(f"[TelegramBridge] Worker error: {e}")
+            try:
+                _send_message(token, chat_id, f"❌ خطأ أثناء تنفيذ الأمر: {e}")
+            except Exception:
+                pass
 
 
 def _bridge_loop(token: str, allowed_ids: set, polling_timeout: int):
@@ -507,7 +621,6 @@ def _bridge_loop(token: str, allowed_ids: set, polling_timeout: int):
                 msg = update.get("message", {})
                 user_id = msg.get("from", {}).get("id")
                 chat_id = msg.get("chat", {}).get("id")
-                text = (msg.get("text") or "").strip()
 
                 # SECURITY: Whitelist enforcement
                 if user_id not in allowed_ids:
@@ -515,24 +628,9 @@ def _bridge_loop(token: str, allowed_ids: set, polling_timeout: int):
                 if not chat_id:
                     continue
 
-                # Support Voice Notes & Audio Records
-                voice = msg.get("voice") or msg.get("audio")
-                if not text and voice:
-                    file_id = voice.get("file_id")
-                    mime = voice.get("mime_type", "audio/ogg")
-                    _send_message(token, chat_id, "🎧 جاري الاستماع للرسالة الصوتية وتفريغها...")
-                    transcribed = _transcribe_audio(token, file_id, mime)
-                    if transcribed:
-                        _send_message(token, chat_id, f"🎙️ تم فهم الصوت:\n«{transcribed}»")
-                        text = transcribed
-                    else:
-                        _send_message(token, chat_id, "⚠️ تعذر فهم الرسالة الصوتية أو تفريغها، حاول مجدداً أو اكتب الأمر.")
-                        continue
-
-                if not text:
-                    continue
-
-                _handle_message(token, chat_id, text)
+                # Hand off to the worker so a slow transcription or command
+                # never stalls polling (voice + text handled in _process_update).
+                _state.inbox.put_nowait((token, chat_id, msg))
 
         except requests.exceptions.Timeout:
             continue
@@ -550,6 +648,16 @@ def _bridge_loop(token: str, allowed_ids: set, polling_timeout: int):
         pass
 
 
+def _resolve_token(cfg: dict) -> str:
+    token = ""
+    try:
+        from memory.config_manager import get_plugin_setting
+        token = get_plugin_setting("telegram_bridge", "bot_token", "") or ""
+    except Exception:
+        pass
+    return token or cfg.get("bot_token", "")
+
+
 def run(parameters: dict, player=None, session_memory=None) -> str:
     action = parameters.get("action", "status")
 
@@ -560,17 +668,18 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     if not _cfg.get("enabled", True):
         return "Telegram bridge is disabled in config."
 
-    token = ""
-    try:
-        from memory.config_manager import get_plugin_setting
-        token = get_plugin_setting("telegram_bridge", "bot_token", "") or ""
-    except Exception:
-        pass
-    if not token:
-        token = _cfg.get("bot_token", "")
+    token = _resolve_token(_cfg)
 
     allowed_ids = set(_cfg.get("allowed_user_ids", []))
-    polling_timeout = int(_cfg.get("polling_interval", 30))
+    polling_timeout = max(10, int(_cfg.get("polling_interval", 30)))
+    _state.token = token
+    _state.allowed_ids = allowed_ids
+
+    if action == "send":
+        return send_to_owner(parameters.get("message", ""))
+
+    if action == "send_status":
+        return send_to_owner(_get_status_text())
 
     if action == "start":
         with _state.bridge_lock:
@@ -586,6 +695,12 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
                 name="TelegramBridge"
             )
             _state.bridge_thread.start()
+            _state.forwarder_thread = threading.Thread(
+                target=_forwarder_loop, daemon=True, name="TelegramForwarder")
+            _state.forwarder_thread.start()
+            _state.worker_thread = threading.Thread(
+                target=_worker_loop, daemon=True, name="TelegramWorker")
+            _state.worker_thread.start()
             p = get_player()
             if p and hasattr(p, "write_log"):
                 p.write_log("[Telegram] 🟢 Bridge started — listening for messages...")

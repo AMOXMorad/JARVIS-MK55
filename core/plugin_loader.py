@@ -78,6 +78,39 @@ class PluginRegistry:
     def has(self, name: str) -> bool:
         return name in self._plugins
 
+    def load_plugin_file(self, path: Path, core_tool_names: set[str] | None = None) -> PluginRecord:
+        """Hot-load or reload a single plugin .py file at runtime without restarting JARVIS."""
+        core_names = core_tool_names or set()
+        try:
+            module_name = f"plugins.{path.stem}"
+            spec = importlib.util.spec_from_file_location(module_name, path)
+            if spec is None or spec.loader is None:
+                raise ImportError("could not build import spec")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                sys.modules.pop(module_name, None)
+                raise
+            rec = _validate(module, path.name)
+            if rec.valid and rec.name in core_names:
+                rec = PluginRecord(name=rec.name, file=path.name,
+                                   error=f"Name '{rec.name}' collides with a core tool — rejected.")
+        except Exception as e:
+            rec = PluginRecord(name=path.stem, file=path.name,
+                               error=_load_error(path, path.parent, e))
+            traceback.print_exc()
+
+        self._all_records = [r for r in self._all_records if r.file != path.name and r.name != rec.name]
+        self._all_records.append(rec)
+        if rec.valid:
+            self._plugins[rec.name] = rec
+            self._logger(f"Plugin hot-loaded: {rec.name} ({path.name})")
+        else:
+            self._logger(f"Plugin hot-load rejected: {path.name} — {rec.error}")
+        return rec
+
     def scheduling(self, name: str) -> Optional[str]:
         """How this plugin's result should re-enter the conversation, if it said."""
         rec = self._plugins.get(name)
